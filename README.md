@@ -23,13 +23,13 @@ This project analyzes historical tennis data to predict match outcomes for the W
 
 ## Learnings
 
+After completing the project and running it, these points were discovered:
 
 
 ## Run the project
 
 ### Requirements
 
-- Python 3.x
 - Pandas, NumPy
 - scikit-learn, XGBoost
 - Matplotlib, Seaborn
@@ -40,8 +40,10 @@ pip install -r requirements.txt
 ```
 
 ### Run
+```
 python src/train_model.py
 streamlit run app/dashboard.py
+```
 
 
 ## License
