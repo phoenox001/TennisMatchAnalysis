@@ -27,3 +27,26 @@ def read_all_pointbypoint_data(directory, file_pattern="*.csv"):
     pointbypoint_data_list = [pd.read_csv(file) for file in file_list]
     combined_pointbypoint_data = pd.concat(pointbypoint_data_list, ignore_index=True)
     return combined_pointbypoint_data
+
+def preprocess_pointbypoint_data(data):
+    """
+    Preprocesses point-by-point data by converting time columns to timedelta and handling missing values.
+
+    Args:
+        data (pd.DataFrame): DataFrame containing point-by-point data.
+
+    Returns:
+        pd.DataFrame: Preprocessed DataFrame with time columns converted to timedelta.
+    """
+    # Convert time columns to timedelta
+    time_columns = ["point_time", "set_time", "match_time"]
+    for col in time_columns:
+        if col in data.columns:
+            data[col] = pd.to_timedelta(data[col], errors='coerce')
+
+    # Fill missing values in time columns with zero
+    for col in time_columns:
+        if col in data.columns:
+            data[col] = data[col].fillna(pd.Timedelta(seconds=0))
+
+    return data
