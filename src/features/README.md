@@ -20,6 +20,8 @@ These features were chosen based on a mix of general good features for tennis ma
 - years on tour
 - average rank opponents beaten
 - common opponents difference
+- average level of tourney -> tourney score
+- percentage matches played on surface xy (hard, clay, grass, carpet)
 
 
 ## Per Match Statistics
@@ -39,9 +41,7 @@ These features were chosen based on a mix of general good features for tennis ma
 - average serve speed
 
 ## Tourney information
-- average level of tourney -> tourney score
 - tourney round
 - is home country
 - match type (number of winning sets)
-- percentage matches played on surface xy (hard, clay, grass, carpet)
-- suface speed score
+- surface speed score

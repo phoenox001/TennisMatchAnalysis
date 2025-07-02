@@ -145,6 +145,235 @@ def compute_historical_averages(matches, player_col, stat_prefix):
     return result
 
 
+def create_player_match_df(matches):
+    """
+    Creates a DataFrame with one row per player per match,
+    including both winner and loser information.
+
+    Args:
+        matches (DataFrame): DataFrame containing match data.
+    Returns:
+        DataFrame: Matches DataFrame with player match history.
+    """
+
+    # Prepare winners data
+    winners = matches[
+        [
+            "tourney_date",
+            "winner_id",
+            "loser_id",
+            "surface",
+            "tourney_level",
+            "tourney_name",
+            "winner_rank",
+            "loser_rank",
+        ]
+    ]
+    winners = winners.rename(
+        columns={
+            "winner_id": "player_id",
+            "loser_id": "opponent_id",
+            "winner_rank": "player_rank",
+            "loser_rank": "opponent_rank",
+        }
+    )
+    winners["outcome"] = 1
+
+    # Prepare losers data
+    losers = matches[
+        [
+            "tourney_date",
+            "loser_id",
+            "winner_id",
+            "surface",
+            "tourney_level",
+            "tourney_name",
+            "loser_rank",
+            "winner_rank",
+        ]
+    ]
+    losers = losers.rename(
+        columns={
+            "loser_id": "player_id",
+            "winner_id": "opponent_id",
+            "loser_rank": "player_rank",
+            "winner_rank": "opponent_rank",
+        }
+    )
+    losers["outcome"] = 0
+
+    # Combine and sort
+    player_matches = pd.concat([winners, losers], ignore_index=True)
+    player_matches = player_matches.sort_values(
+        ["player_id", "tourney_date"]
+    ).reset_index(drop=True)
+    return player_matches
+
+
+def compute_expanding_feature(data, group_col, date_col, feature_func):
+    """
+    General helper to compute an expanding window feature for each group,
+    excluding current row (shifted).
+    """
+
+    def apply_func(group):
+        group = group.sort_values(date_col)
+        # We shift by 1 to exclude current match from aggregation
+        return feature_func(group).shift(1)
+
+    return data.groupby(group_col).apply(apply_func).reset_index(level=0, drop=True)
+
+
+def calc_pct_matches_won(group):
+    """
+    Calculate the cumulative percentage of matches won for each player.
+    """
+    return group["outcome"].expanding().mean()
+
+
+def calc_avg_opponent_rank_won(group):
+    """
+    Calculate the cumulative average rank of opponents beaten by the player.
+    This only considers matches that the player has won.
+    """
+    won = group.loc[group["outcome"] == 1, "opponent_rank"]
+    # For cumulative avg only consider won matches before current match
+    cum_avg = won.expanding().mean()
+    # We want to align this with full group index, filling NaNs for lost matches
+    avg_series = pd.Series(index=group.index, dtype=float)
+    avg_series.loc[won.index] = cum_avg
+    return avg_series
+
+
+def calc_avg_tourney_level(group, level_map):
+    """
+    Calculate the cumulative average level of tournaments played by the player.
+    The level is mapped to a numeric score based on the provided level_map.
+    """
+    tourney_scores = group["tourney_level"].map(level_map)
+    return tourney_scores.expanding().mean()
+
+
+def calc_surface_pct(group):
+    """
+    Calculate the cumulative percentage of matches played on each surface type.
+    This returns a Series with the percentage of matches played on the current surface
+    at each point in the group.
+    The surface is expected to be a categorical variable with values like 'Hard', 'Clay', 'Grass', etc.
+    """
+    surface_counts = (
+        group["surface"]
+        .expanding()
+        .apply(
+            lambda x: x.value_counts(normalize=True).get(group.iloc[len(x) - 1], 0),
+            raw=False,
+        )
+    )
+    return surface_counts
+
+
+def compute_features(matches):
+    """
+    Computes various features for each player based on their match history.
+
+    Args:
+        matches (DataFrame): DataFrame containing match data
+    Returns:
+        DataFrame: Matches DataFrame with added features for each player.
+    """
+    player_matches = create_player_match_df(matches)
+
+    level_map = {
+        "G": 7,  # Grand Slam
+        "F": 6,  # ATP Finals
+        "M": 5,  # Masters 1000
+        "A": 4,  # ATP 500 & 250
+        "D": 3,  # Davis Cup
+        "C": 2,  # Challengers
+        "S": 1,  # Satellites/ITFs
+    }
+
+    # pct matches won
+    player_matches["pct_matches_won_prior"] = compute_expanding_feature(
+        player_matches, "player_id", "tourney_date", calc_pct_matches_won
+    )
+
+    # pct grand slams won
+    grand_slams = player_matches[player_matches["tourney_level"] == "G"]
+    pct_gs = compute_expanding_feature(
+        grand_slams, "player_id", "tourney_date", calc_pct_matches_won
+    )
+    player_matches = player_matches.merge(
+        pct_gs.rename("pct_grand_slams_won_prior"),
+        how="left",
+        left_index=True,
+        right_index=True,
+    )
+
+    # pct Wimbledon won (assuming 'Wimbledon' in tourney_name)
+    wimbledon = player_matches[
+        player_matches["tourney_name"].str.contains("Wimbledon", case=False, na=False)
+    ]
+    pct_wimbledon = compute_expanding_feature(
+        wimbledon, "player_id", "tourney_date", calc_pct_matches_won
+    )
+    player_matches = player_matches.merge(
+        pct_wimbledon.rename("pct_wimbledon_won_prior"),
+        how="left",
+        left_index=True,
+        right_index=True,
+    )
+
+    # years on tour
+    first_match_year = (
+        player_matches.groupby("player_id")["tourney_date"].transform("min").dt.year
+    )
+    player_matches["years_on_tour"] = (
+        player_matches["tourney_date"].dt.year - first_match_year
+    )
+
+    # average rank of opponents beaten (only won matches)
+    def avg_opponent_rank_won(group):
+        group = group.sort_values("tourney_date")
+        ranks = []
+        for i, row in group.iterrows():
+            past = group.loc[: i - 1]
+            beaten_ranks = past.loc[past["outcome"] == 1, "opponent_rank"]
+            avg_rank = beaten_ranks.mean() if not beaten_ranks.empty else np.nan
+            ranks.append(avg_rank)
+        return pd.Series(ranks, index=group.index)
+
+    player_matches["avg_opponent_rank_won_prior"] = (
+        player_matches.groupby("player_id")
+        .apply(avg_opponent_rank_won)
+        .reset_index(level=0, drop=True)
+    )
+
+    # average level of tourney (numeric score)
+    player_matches["avg_tourney_level_prior"] = compute_expanding_feature(
+        player_matches,
+        "player_id",
+        "tourney_date",
+        lambda g: calc_avg_tourney_level(g, level_map),
+    )
+
+    # percentage matches played on surface
+    # We calculate a separate percentage per surface type
+    for surface_type in ["Hard", "Clay", "Grass", "Carpet"]:
+        surface_mask = player_matches["surface"].str.lower() == surface_type.lower()
+
+        def surface_pct_func(g):
+            g = g.sort_values("tourney_date")
+            return g["surface"].expanding().apply(lambda x: (x == surface_type).mean())
+
+        col_name = f"pct_matches_on_{surface_type.lower()}_prior"
+        player_matches[col_name] = compute_expanding_feature(
+            player_matches, "player_id", "tourney_date", surface_pct_func
+        )
+
+    return player_matches
+
+
 def create_average_match_statistics(matches):
     """
     Creates average match statistics for each player.
@@ -164,6 +393,53 @@ def create_average_match_statistics(matches):
     matches = compute_historical_averages(matches, "loser_id", "loser_seed")
 
     return matches
+
+
+def merge_player_features(matches, player_features_df, prefix, player_id_col):
+    """
+    Merge player features into matches DataFrame for one player side (winner or loser).
+
+    Args:
+        matches: main matches DataFrame
+        player_features_df: player-match features DataFrame
+        prefix: string prefix for columns in the output, e.g. 'player1' or 'player2'
+        player_id_col: column in matches for player id, e.g. 'winner_id' or 'loser_id'
+    Returns:
+        DataFrame: matches DataFrame with player features merged
+    """
+    # Select relevant columns from player_features_df to merge
+    features_to_merge = player_features_df.drop(
+        columns=[
+            "opponent_id",
+            "outcome",
+            "player_rank",
+            "opponent_rank",
+            "tourney_level",
+            "tourney_name",
+            "surface",
+        ]
+    )
+
+    # Rename columns with prefix except player_id and tourney_date
+    rename_dict = {
+        col: f"{prefix}_{col}"
+        for col in features_to_merge.columns
+        if col not in ["player_id", "tourney_date"]
+    }
+    features_to_merge = features_to_merge.rename(columns=rename_dict)
+
+    # Merge on player_id and tourney_date
+    merged = matches.merge(
+        features_to_merge,
+        how="left",
+        left_on=[player_id_col, "tourney_date"],
+        right_on=["player_id", "tourney_date"],
+    )
+
+    # Drop duplicated columns from merge
+    merged = merged.drop(columns=["player_id"])
+
+    return merged
 
 
 def randomize_player_order(matches):
@@ -239,9 +515,14 @@ def final_feature_dataframe(matches, players):
     Returns:
         DataFrame: Final feature DataFrame ready for analysis or modeling.
     """
-    
+
     matches = merge_all_player_info(matches, players)
     matches = create_average_match_statistics(matches)
+    player_features = compute_features(matches)
+    matches = merge_player_features(matches, player_features, "player1", "winner_id")
+    matches = merge_player_features(
+        matches, player_features, prefix="player2", player_id_col="loser_id"
+    )
     matches = prepare_matches_data(matches)
 
     # Remove unnecessary columns that are not needed for the analysis
@@ -271,4 +552,3 @@ def final_feature_dataframe(matches, players):
     matches_reduced = matches.drop(columns=cols_to_drop)
 
     return matches_reduced
-
