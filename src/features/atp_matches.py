@@ -5,6 +5,14 @@ import numpy as np
 import os
 import glob
 
+"""
+This module contains functions to read and preprocess ATP matches data.
+It provides functionality to read all ATP match files from a specified directory,
+combine them into a single DataFrame, and perform necessary preprocessing steps
+such as handling missing values, renaming columns, and adding match IDs.
+It also includes functions to impute missing match statistics based on context
+and to preprocess the matches data for further analysis.
+"""
 
 def read_all_atp_matches(directory, file_pattern="atp_matches_*.csv"):
     """
@@ -41,13 +49,13 @@ def impute_missing_match_stats(
     Imputes missing match statistics using medians grouped by match context
     and adds _missing flags.
 
-    Parameters:
-    - matches: (pd.DataFrame) DataFrame containing match statistics.
-    - stat_columns: list of columns to impute (e.g. ['w_ace', 'l_df', ...])
-    - group_context: list of context columns (default: ['best_of', 'surface'])
+    Args:
+        matches: (pd.DataFrame) DataFrame containing match statistics.
+        stat_columns: list of columns to impute (e.g. ['w_ace', 'l_df', ...])
+        group_context: list of context columns (default: ['best_of', 'surface'])
 
     Returns:
-    - DataFrame with imputed values and added _missing flags
+        DataFrame with imputed values and added _missing flags
     """
     matches = matches.copy()
 

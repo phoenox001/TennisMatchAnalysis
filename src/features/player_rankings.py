@@ -5,6 +5,14 @@ import numpy as np
 import os
 import glob
 
+"""
+This module contains functions to read and preprocess ATP player rankings data.
+It provides functionality to read all ATP player files from a specified directory,
+combine them into a single DataFrame, and perform necessary preprocessing steps
+such as handling missing values, renaming columns, and adding player information.
+It also includes functions to read ATP players data and combine rankings with player information.
+"""
+
 
 def read_atp_players(file_path="../data/atp_matches/atp_players.csv"):
     """

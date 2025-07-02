@@ -6,7 +6,7 @@ import os
 import glob
 
 
-def read_all_pointbypoint_data(directory, file_pattern="*.csv"):
+def read_all_pointbypoint_data(directory, file_pattern="*-points.csv"):
     """
     Reads all point-by-point data files from a directory and concatenates them into a single DataFrame.
 
@@ -28,6 +28,7 @@ def read_all_pointbypoint_data(directory, file_pattern="*.csv"):
     combined_pointbypoint_data = pd.concat(pointbypoint_data_list, ignore_index=True)
     return combined_pointbypoint_data
 
+
 def preprocess_pointbypoint_data(data):
     """
     Preprocesses point-by-point data by converting time columns to timedelta and handling missing values.
@@ -38,15 +39,14 @@ def preprocess_pointbypoint_data(data):
     Returns:
         pd.DataFrame: Preprocessed DataFrame with time columns converted to timedelta.
     """
-    # Convert time columns to timedelta
-    time_columns = ["point_time", "set_time", "match_time"]
-    for col in time_columns:
-        if col in data.columns:
-            data[col] = pd.to_timedelta(data[col], errors='coerce')
 
-    # Fill missing values in time columns with zero
-    for col in time_columns:
-        if col in data.columns:
-            data[col] = data[col].fillna(pd.Timedelta(seconds=0))
+    data["ElapsedTime"] = pd.to_timedelta(data["ElapsedTime"], errors="coerce")
+    data["Speed_KMH"] = data["Speed_KMH"].replace(0, np.nan)
+
+    data = data[
+        ["match_id", "ElapsedTime", "PointServer", "Speed_KMH", "ServeIndicator"]
+    ]
+    data = data[data["ElapsedTime"].notna()]
+    data = data[data["Speed_KMH"].notna()]
 
     return data
