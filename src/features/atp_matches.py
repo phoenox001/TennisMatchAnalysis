@@ -5,25 +5,28 @@ import numpy as np
 import os
 import glob
 
-"""
-This module contains functions to read and preprocess ATP matches data.
-It provides functionality to read all ATP match files from a specified directory,
-combine them into a single DataFrame, and perform necessary preprocessing steps
-such as handling missing values, renaming columns, and adding match IDs.
-It also includes functions to impute missing match statistics based on context
-and to preprocess the matches data for further analysis.
-"""
+#
+# This module contains functions to read and preprocess ATP matches data.
+# It provides functionality to read all ATP match files from a specified directory,
+# combine them into a single DataFrame, and perform necessary preprocessing steps
+# such as handling missing values, renaming columns, and adding match IDs.
+# It also includes functions to impute missing match statistics based on context
+# and to preprocess the matches data for further analysis.
+#
+
 
 def read_all_atp_matches(directory, file_pattern="atp_matches_*.csv"):
-    """
-    Reads all ATP match files from a directory and concatenates them into a single DataFrame.
+    #
+    # Reads all ATP match files from a directory and concatenates them into a single DataFrame.
 
-    Args:
-        directory (str): Directory containing ATP match CSV files.
+    # Args:
+    #     directory (str): Directory containing ATP match CSV files.
 
-    Returns:
-        pd.DataFrame: Concatenated DataFrame of all ATP matches.
-    """
+    # Returns:
+    #     pd.DataFrame: Concatenated DataFrame of all ATP matches.
+    #
+
+    print(f"Reading ATP matches from directory: {directory}")
     pattern = os.path.join(directory, file_pattern)
     file_list = glob.glob(pattern)
 
@@ -39,24 +42,28 @@ def read_all_atp_matches(directory, file_pattern="atp_matches_*.csv"):
         + "-"
         + combined_atp_matches["match_num"].astype("str")
     )
+    print(
+        f"Combined {len(combined_atp_matches)} ATP matches from {len(file_list)} files."
+    )
     return combined_atp_matches
 
 
 def impute_missing_match_stats(
     matches, stat_columns, group_context=["best_of", "surface"]
 ):
-    """
-    Imputes missing match statistics using medians grouped by match context
-    and adds _missing flags.
+    #
+    # Imputes missing match statistics using medians grouped by match context
+    # and adds _missing flags.
 
-    Args:
-        matches: (pd.DataFrame) DataFrame containing match statistics.
-        stat_columns: list of columns to impute (e.g. ['w_ace', 'l_df', ...])
-        group_context: list of context columns (default: ['best_of', 'surface'])
+    # Args:
+    #     matches: (pd.DataFrame) DataFrame containing match statistics.
+    #     stat_columns: list of columns to impute (e.g. ['w_ace', 'l_df', ...])
+    #     group_context: list of context columns (default: ['best_of', 'surface'])
 
-    Returns:
-        DataFrame with imputed values and added _missing flags
-    """
+    # Returns:
+    #     DataFrame with imputed values and added _missing flags
+    #
+    print(f"Imputing missing match statistics for columns: {stat_columns}")
     matches = matches.copy()
 
     for col in stat_columns:
@@ -79,21 +86,26 @@ def impute_missing_match_stats(
 
         matches.drop(columns=[f"{col}_median"], inplace=True)
 
+    print(f"Imputed missing statistics for {len(matches)} matches.")
     return matches
 
 
 def preprocess_atp_matches_data(matches):
-    """
-    Cleans ATP matches data by removing duplicates, filling missing data , setting data types, and adding match_id.
+    #
+    # Cleans ATP matches data by removing duplicates, filling missing data , setting data types, and adding match_id.
 
-    Args:
-        matches (pd.DataFrame): DataFrame containing ATP matches.
+    # Args:
+    #     matches (pd.DataFrame): DataFrame containing ATP matches.
 
-    Returns:
-        pd.DataFrame: Cleaned DataFrame with unique matches and match_id.
-    """
+    # Returns:
+    #     pd.DataFrame: Cleaned DataFrame with unique matches and match_id.
+    #
 
+    print("Preprocessing ATP matches data...")
     matches = matches.drop_duplicates(subset=["match_id"], keep="first")
+
+    matches["winner_id"] = matches["winner_id"].astype("int64")
+    matches["loser_id"] = matches["loser_id"].astype("int64")
 
     matches["tourney_date"] = pd.to_datetime(matches["tourney_date"], format="%Y%m%d")
     matches["winner_is_seeded"] = matches["winner_seed"].notna().astype(int)
@@ -123,6 +135,26 @@ def preprocess_atp_matches_data(matches):
     matches["winner_hand"] = matches["winner_hand"].fillna("U").astype(str)
     matches["loser_hand"] = matches["loser_hand"].fillna("U").astype(str)
 
+    matches["surface"] = matches["surface"].fillna("Unknown").astype(str)
+    matches["draw_size"] = matches["draw_size"].replace("R", np.nan)
+    matches["draw_size"] = matches["draw_size"].fillna(-1).astype(int)
+    draw_size_map = matches.groupby("tourney_level")["draw_size"].median()
+    matches["draw_size"] = matches.apply(
+        lambda row: (
+            draw_size_map[row["tourney_level"]]
+            if (row["draw_size"] == -1)
+            else row["draw_size"]
+        ),
+        axis=1,
+    )
+
+    matches["winner_rank_points"] = matches["winner_rank_points"].fillna(0).astype(int)
+    matches["loser_rank_points"] = matches["loser_rank_points"].fillna(0).astype(int)
+
+    max_rank = matches[["winner_rank", "winner_rank"]].max().max() + 100
+    matches["winner_rank"] = matches["winner_rank"].fillna(max_rank).astype(int)
+    matches["loser_rank"] = matches["loser_rank"].fillna(max_rank).astype(int)
+
     matches = impute_missing_match_stats(
         matches,
         stat_columns=[
@@ -148,4 +180,9 @@ def preprocess_atp_matches_data(matches):
         ],
     )
 
+    matches = matches.drop(
+        columns=["loser_ioc", "winner_ioc", "winner_name", "loser_name", "score"],
+        errors="ignore",
+    )
+    print("Finished preprocessing ATP matches data.")
     return matches
