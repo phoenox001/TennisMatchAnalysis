@@ -1,6 +1,7 @@
 # File: src/features/player_rankings.py
 
-import pandas as pd
+import utils.dask_wrapper as pd
+import pandas as p
 import numpy as np
 import os
 import glob
@@ -27,7 +28,10 @@ def read_atp_players(file_path):
 
     print(f"Reading ATP players data from: {file_path}")
 
-    return pd.read_csv(file_path)
+    return pd.read_csv(
+        file_path,
+        dtype={"player_id": "int64", "dob": "str", "height": "float64"},
+    )
 
 
 def read_all_atp_rankings(directory, file_pattern="atp_rankings_*.csv"):
@@ -51,7 +55,10 @@ def read_all_atp_rankings(directory, file_pattern="atp_rankings_*.csv"):
             f"No files matching pattern '{pattern}' found in directory '{directory}'."
         )
 
-    atp_rankings_list = [pd.read_csv(file) for file in file_list]
+    atp_rankings_list = [
+        pd.read_csv(file, dtype={"player": "int64", "points": "float64"})
+        for file in file_list
+    ]
     combined_atp_rankings = pd.concat(atp_rankings_list, ignore_index=True)
     combined_atp_rankings["ranking_date"] = pd.to_datetime(
         combined_atp_rankings["ranking_date"], format="%Y%m%d"
@@ -74,44 +81,14 @@ def combine_rankings_with_players(rankings, players):
     print("Combining ATP rankings with player information...")
 
     rankings = rankings.rename(columns={"player": "player_id"})
+    players["dob"] = pd.to_datetime(players["dob"], format="%Y%m%d", errors="coerce")
+    players["player_id"] = players["player_id"].astype("int64")
+    rankings["player_id"] = players["player_id"].astype("int64")
     ranked_players = pd.merge(rankings, players, on="player_id", how="left")
     ranked_players = ranked_players.sort_values(
         by=["ranking_date", "rank"], ascending=[False, True]
     )
     return ranked_players
-
-
-def calculate_missing_dob(players, matches):
-    #
-    # Calculates missing date of birth (dob) for players based on their first match date.
-    # We assume a debut age of 18 years.
-
-    # Args:
-    #     players (pd.DataFrame): DataFrame containing player information with missing dob.
-    #     matches (pd.DataFrame): DataFrame containing match history.
-
-    # Returns:
-    #     pd.Datetime: The estimated dob of the player.
-    #
-
-    print("Calculating missing date of birth (dob) for players...")
-
-    matches = matches.sort_values(by="tourney_date")
-
-    first_match_dates = matches.groupby("player_id")["tourney_date"].min()
-
-    # Calculate dob assuming a debut age of 18 years
-    players["dob"] = players.apply(
-        lambda row: (
-            row["dob"]
-            if pd.notna(row["dob"])
-            else first_match_dates.get(row["player_id"], pd.NaT)
-            - pd.DateOffset(years=18)
-        ),
-        axis=1,
-    )
-
-    return players
 
 
 def preprocess_player_data(players):
@@ -129,8 +106,11 @@ def preprocess_player_data(players):
     players = players.copy()
     players = players.drop_duplicates(subset=["player_id"], keep="first")
 
-    players = players[players["name_first"].notna()]
-    players = players[players["name_last"].notna()]
+    players = players[pd.dask_notna(players["name_first"])]
+    players = players[pd.dask_notna(players["name_last"])]
+
+    players["points_missing"] = players["points"].isna().astype(int)
+    players["points"] = players["points"].fillna(0).astype(int)
 
     # players.loc["height"] = players["height"].fillna(players["height"].median())
     players["ioc"] = players["ioc"].str.upper()
@@ -139,13 +119,11 @@ def preprocess_player_data(players):
     players["ranking_date"] = pd.to_datetime(
         players["ranking_date"], format="%Y%m%d", errors="coerce"
     )
-    players["points_missing"] = players["points"].isna().astype(int)
-    players["points"] = players["points"].fillna(0).astype(int)
 
     print(players.columns)
 
     players = players.drop(columns=["wikidata_id", "dob", "height"], errors="ignore")
-    players["player_id"] = players["player_id"].astype("int64", errors="ignore")
+    players["player_id"] = players["player_id"].astype("int64")
     players = players.sort_values(by="player_id")
 
     print("Finished preprocessing player data.")

@@ -1,3 +1,5 @@
+import utils.config
+import os
 from src.features.features import create_feature_dataframe
 from src.features.features import get_preprocessed_data
 from sklearn.model_selection import StratifiedKFold
@@ -23,7 +25,7 @@ def createTrainingData():
             "player1_dob",
             "player2_dob",
             "tourney_date",
-            ""
+            "",
         ]
     )
     y = trainingData["player1_wins"]

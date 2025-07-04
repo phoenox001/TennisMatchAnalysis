@@ -6,3 +6,5 @@ XGBoost
 matplotlib
 streamlit
 SHAP
+dask
+fastparquet
