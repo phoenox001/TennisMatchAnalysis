@@ -172,11 +172,8 @@ def create_player_match_df(matches):
             "surface",
             "tourney_level",
             "tourney_name",
-            "winner_rank",
             "loser_rank_points",
             "loser_rank",
-            "winner_seed",
-            "loser_seed",
             *winner_cols,
         ]
     ]
@@ -199,8 +196,6 @@ def create_player_match_df(matches):
             "loser_id": "opponent_id",
             "winner_rank": "player_rank",
             "loser_rank": "opponent_rank",
-            "winner_seed": "player_seed",
-            "loser_seed": "opponent_seed",
         }
     )
 
@@ -216,11 +211,8 @@ def create_player_match_df(matches):
             "surface",
             "tourney_level",
             "tourney_name",
-            "loser_rank",
             "winner_rank_points",
             "winner_rank",
-            "winner_seed",
-            "loser_seed",
             *loser_cols,
         ]
     ]
@@ -242,8 +234,6 @@ def create_player_match_df(matches):
             "winner_id": "opponent_id",
             "loser_rank": "player_rank",
             "winner_rank": "opponent_rank",
-            "loser_seed": "player_seed",
-            "winner_seed": "opponent_seed",
         }
     )
 
@@ -264,9 +254,7 @@ def create_player_match_df(matches):
         type(player_matches),
         player_matches is None,
     )
-
     player_matches = dd.from_pandas(player_matches)
-    player_matches = player_matches.reset_index(drop=True)
     return player_matches
 
 
@@ -363,15 +351,18 @@ def compute_features(matches):
 
     for col in player_stats:
         print("Computing rolling averages for", col)
-        player_matches = player_matches.reset_index(drop=True)
+        player_matches = player_matches.reset_index(drop=True).compute()
+        player_matches = dd.from_pandas(player_matches)
         player_matches = compute_rolling_averages(player_matches, "player_id", col)
+        player_matches = player_matches.drop(columns=col)
 
     # average tourney level of player
     print("Calculating average tourney level of players...")
     player_matches["tourney_level_numeric"] = player_matches["tourney_level"].map(
         level_map, meta=("tourney_level_numeric", "int64")
     )
-    player_matches = player_matches.reset_index(drop=True)
+    player_matches = player_matches.reset_index(drop=True).compute()
+    player_matches = dd.from_pandas(player_matches)
 
     player_matches = compute_rolling_averages(
         player_matches, "player_id", "tourney_level_numeric"
@@ -379,15 +370,17 @@ def compute_features(matches):
     player_matches = player_matches.rename(
         columns={"tourney_level_numeric_avg": "player_tourney_level_avg"}
     )
-    player_matches = player_matches.drop("tourney_level_numeric", axis=1)
+    player_matches = player_matches.drop(columns=["tourney_level_numeric"])
 
-    player_matches = player_matches.reset_index(drop=True)
+    player_matches = player_matches.reset_index(drop=True).compute()
+    player_matches = dd.from_pandas(player_matches)
 
     # pct matches won
     print("Calculating player percentage matches won...")
 
     player_matches = player_matches.sort_values(["player_id", "tourney_date"])
-    player_matches = player_matches.reset_index(drop=True)
+    player_matches = player_matches.reset_index(drop=True).compute()
+    player_matches = dd.from_pandas(player_matches)
 
     player_matches = compute_rolling_averages(player_matches, "player_id", "outcome")
     player_matches = player_matches.rename(
@@ -400,7 +393,8 @@ def compute_features(matches):
     grand_slams = player_matches[player_matches["tourney_level"] == "G"]
     grand_slams = grand_slams[["player_id", "match_id", "outcome", "tourney_date"]]
 
-    grand_slams = grand_slams.reset_index(drop=True)
+    grand_slams = grand_slams.reset_index(drop=True).compute()
+    grand_slams = dd.from_pandas(grand_slams)
     grand_slams = compute_rolling_averages(grand_slams, "player_id", "outcome")
     grand_slams = grand_slams.rename(
         columns={"outcome_avg": "player_pct_grand_slams_won"}
@@ -419,7 +413,8 @@ def compute_features(matches):
     wimbledon = player_matches[player_matches["tourney_name"] == "Wimbledon"]
     wimbledon = wimbledon[["player_id", "match_id", "outcome", "tourney_date"]]
 
-    wimbledon = wimbledon.reset_index(drop=True)
+    wimbledon = wimbledon.reset_index(drop=True).compute()
+    wimbledon = dd.from_pandas(wimbledon)
     index_series = wimbledon.reset_index().index.to_series().compute()
     duplicates_exist = index_series.duplicated().any()
     print("Duplicates in index?", duplicates_exist)
@@ -467,16 +462,21 @@ def compute_features(matches):
             "tourney_date",
         ]
     ]
-    won_matches = won_matches.reset_index(drop=True)
+    won_matches = won_matches.reset_index(drop=True).compute()
+    won_matches = dd.from_pandas(won_matches)
     won_matches = compute_rolling_averages(won_matches, "player_id", "opponent_rank")
 
-    won_matches = won_matches.reset_index(drop=True)
+    won_matches = won_matches.reset_index(drop=True).compute()
+    won_matches = dd.from_pandas(won_matches)
     won_matches = compute_rolling_averages(
         won_matches, "player_id", "opponent_rank_points"
     )
     won_matches = won_matches.drop(columns=["opponent_rank", "opponent_rank_points"])
     player_matches = player_matches.merge(
         won_matches, how="left", on=["match_id", "player_id", "tourney_date"]
+    )
+    player_matches = player_matches.drop(
+        columns=["opponent_rank", "opponent_rank_points"]
     )
 
     player_matches = player_matches.persist()
@@ -498,11 +498,15 @@ def compute_features(matches):
 
     player_matches = player_matches.persist()
 
+    print("Columns before computing surfaces:", player_matches.columns)
+
     surfaces = [col for col in player_matches.columns if col.startswith("surface")]
 
     for surface in surfaces:
-        player_matches = player_matches.reset_index(drop=True)
+        player_matches = player_matches.reset_index(drop=True).compute()
+        player_matches = dd.from_pandas(player_matches)
         player_matches = compute_rolling_averages(player_matches, "player_id", surface)
+        player_matches = player_matches.drop(columns=surface)
 
     player_matches = player_matches.compute()
     player_matches = dd.from_pandas(player_matches)
