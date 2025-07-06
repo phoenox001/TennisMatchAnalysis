@@ -139,51 +139,6 @@ def merge_all_player_info(matches, players):
     return full_information
 
 
-def compute_historical_averages(matches, player_col, stat_prefix):
-    #
-    # Computes historical averages for player statistics before each match date.
-
-    # Args:
-    #     matches (DataFrame): DataFrame containing match data.
-    #     player_col (str): Column name for player IDs (e.g., 'winner_id', 'loser_id').
-    #     stat_prefix (str): Prefix for the statistics columns (e.g., 'w_', 'l_').
-    # Returns:
-    #     DataFrame: Matches DataFrame with added average statistics for each player.
-    #
-
-    cols = [col for col in matches.columns if col.startswith(stat_prefix)]
-
-    for col in cols:
-        avg_col = f"{col}_avg"
-
-        df = matches
-
-        # Cumulative sum and count for each player
-        df["cumsum"] = df.groupby(player_col)[col].cumsum()
-        df["cumcount"] = df.groupby(player_col)[col].cumcount()
-
-        # Shift to exclude current match
-        df["cumsum_prev"] = df.groupby(player_col)["cumsum"].shift(1, meta=("x", "f8"))
-        df["cumcount_prev"] = df.groupby(player_col)["cumcount"].shift(
-            1, meta=("x", "f8")
-        )
-
-        # Calculate average, guarding division-by-zero
-        df[avg_col] = df["cumsum_prev"] / df["cumcount_prev"]
-        df[avg_col] = df[avg_col].fillna(0.0)
-
-        # Clean up temporary columns
-        matches = df.drop(
-            columns=["cumsum", "cumcount", "cumsum_prev", "cumcount_prev"]
-        )
-        print("Computing match statistics for", col)
-        matches = matches.compute()
-        matches = pd.from_pandas(matches, 8)
-        matches = matches.sort_values(by="tourney_date")
-
-    return matches
-
-
 def create_player_match_df(matches):
     #
     # Creates a DataFrame with one row per player per match,
@@ -195,28 +150,61 @@ def create_player_match_df(matches):
     #     DataFrame: Matches DataFrame with player match history.
     #
 
+    winner_cols = [
+        col
+        for col in matches.columns
+        if col.startswith("w_") and not col.endswith(("date", "median", "missing"))
+    ]
+    loser_cols = [
+        col
+        for col in matches.columns
+        if col.startswith("l_") and not col.endswith(("date", "median", "missing"))
+    ]
     # Prepare winners data
 
     winners = matches[
         [
             "tourney_date",
+            "match_id",
+            "match_num",
             "winner_id",
             "loser_id",
             "surface",
             "tourney_level",
             "tourney_name",
             "winner_rank",
+            "loser_rank_points",
             "loser_rank",
+            "winner_seed",
+            "loser_seed",
+            *winner_cols,
         ]
     ]
-    winners = winners.rename(
-        columns={
+
+    rename_dict = {}
+
+    for col in winners.columns:
+        if col.startswith("winner_"):
+            rename_dict[col] = col.replace("winner_", "player_")
+        if col.startswith("loser_"):
+            rename_dict[col] = col.replace("loser_", "opponent_")
+        if col.startswith("w_"):
+            rename_dict[col] = col.replace("w_", "player_")
+        if col.startswith("l_"):
+            rename_dict[col] = col.replace("l_", "player_")
+
+    rename_dict.update(
+        {
             "winner_id": "player_id",
             "loser_id": "opponent_id",
             "winner_rank": "player_rank",
             "loser_rank": "opponent_rank",
+            "winner_seed": "player_seed",
+            "loser_seed": "opponent_seed",
         }
     )
+
+    winners = winners.rename(columns=rename_dict)
     winners["outcome"] = 1
 
     # Prepare losers data
@@ -229,20 +217,43 @@ def create_player_match_df(matches):
             "tourney_level",
             "tourney_name",
             "loser_rank",
+            "winner_rank_points",
             "winner_rank",
+            "winner_seed",
+            "loser_seed",
+            *loser_cols,
         ]
     ]
-    losers = losers.rename(
-        columns={
+    rename_dict = {}
+
+    for col in losers.columns:
+        if col.startswith("loser_"):
+            rename_dict[col] = col.replace("loser_", "player_")
+        if col.startswith("winner_"):
+            rename_dict[col] = col.replace("winner_", "opponent_")
+        if col.startswith("w_"):
+            rename_dict[col] = col.replace("w_", "player_")
+        if col.startswith("l_"):
+            rename_dict[col] = col.replace("l_", "player_")
+
+    rename_dict.update(
+        {
             "loser_id": "player_id",
             "winner_id": "opponent_id",
             "loser_rank": "player_rank",
             "winner_rank": "opponent_rank",
+            "loser_seed": "player_seed",
+            "winner_seed": "opponent_seed",
         }
     )
+
+    losers = losers.rename(columns=rename_dict)
+
     losers["outcome"] = 0
 
     # Combine and sort
+    winners = winners.reset_index(drop=True)
+    losers = losers.reset_index(drop=True)
     player_matches = dd.concat([winners, losers], ignore_index=True)
     player_matches = player_matches.compute()
     player_matches = player_matches.sort_values(
@@ -254,95 +265,70 @@ def create_player_match_df(matches):
         player_matches is None,
     )
 
-    player_matches = pd.from_pandas(player_matches, 8)
+    player_matches = dd.from_pandas(player_matches)
+    player_matches = player_matches.reset_index(drop=True)
     return player_matches
 
 
-def compute_expanding_feature(
-    data, group_col, date_col, feature_func, feature_name="feature"
-):
+def robust_ffill(df, columns=None):
+    if columns is None:
+        columns = df.columns
+    elif isinstance(columns, str):
+        columns = [columns]
+
+    filled_part = df[columns].map_partitions(
+        lambda part: part.ffill(), meta={col: df[col].dtype for col in columns}
+    )
+
+    for col in columns:
+        df[col] = filled_part[col]
+
+    return df
+
+
+def compute_rolling_averages(matches, player_col, col_name):
     #
-    # Compute an expanding window feature for each group,
-    # excluding the current row (via shift).
+    # Computes rolling averages for player statistics before each match date.
 
     # Args:
-    #     data (dd.DataFrame): Input Dask DataFrame.
-    #     group_col (str): Grouping column name.
-    #     date_col (str): Date column name to sort within each group.
-    #     feature_func (function): Function that takes a Pandas DataFrame and returns a Series.
-    #     feature_name (str): Name of the resulting feature column.
-
+    #     matches (DataFrame): DataFrame containing match data.
+    #     player_col (str): Column name for player IDs (e.g., 'winner_id', 'loser_id').
+    #     stat_prefix (str): Prefix for the statistics columns (e.g., 'w_', 'l_').
     # Returns:
-    #     dd.Series: Dask Series with computed feature.
+    #     DataFrame: Matches DataFrame with added average statistics for each player.
     #
 
-    def apply_func(group):
-        group = group.sort_values(date_col)
-        result = feature_func(group).shift(1)
-        result.name = feature_name
-        return result
+    print("Start computing match statistics for", col_name)
+    avg_col = f"{col_name}_avg"
 
-    # Prepare a dummy Series for meta
-    meta = p.Series([], name=feature_name, dtype="float64")
+    matches = matches.reset_index(drop=True)
+    index_series = matches.index.to_series().compute()
+    duplicates_exist = index_series.duplicated().any()
+    print("Duplicates in index?", duplicates_exist)
 
-    # Apply the function group-wise
-    result = data.groupby(group_col).apply(apply_func, meta=meta)
+    # Shift to exclude current match
+    matches["cumsum_prev"] = matches.groupby(player_col)[col_name].cumsum().shift(1)
+    matches = matches.reset_index(drop=True)
+    matches["cumcount_prev"] = matches.groupby(player_col)[col_name].cumcount().shift(1)
+    matches = matches.reset_index(drop=True)
 
-    # Ensure it's a Series, not DataFrame
-    if isinstance(result, p.DataFrame):
-        result = dd.from_pandas(result)
-    if isinstance(result, dd.DataFrame):
-        result = result[feature_name]
+    # Calculate average, guarding division-by-zero
+    matches[avg_col] = matches["cumsum_prev"] / matches["cumcount_prev"]
+    matches[avg_col] = matches[avg_col].fillna(0.0)
+    matches = matches.reset_index(drop=True)
 
-    return result
+    # Clean up temporary columns
+    matches = matches.drop(columns=["cumsum_prev", "cumcount_prev"])
+    print("Computing match statistics for", col_name)
+    matches = matches.compute()
+    matches = pd.from_pandas(matches, 8)
+    matches = matches.sort_values(by="tourney_date")
 
+    index_series = matches.index.to_series().compute()
+    duplicates_exist = index_series.duplicated().any()
+    print("Duplicates in index after computing?", duplicates_exist)
 
-def calc_pct_matches_won(group):
-    #
-    # Calculate the cumulative percentage of matches won for each player.
-    #
-    return group["outcome"].expanding().mean()
-
-
-def calc_avg_opponent_rank_won(group):
-    #
-    # Calculate the cumulative average rank of opponents beaten by the player.
-    # This only considers matches that the player has won.
-    #
-    won = group.loc[group["outcome"] == 1, "opponent_rank"]
-    # For cumulative avg only consider won matches before current match
-    cum_avg = won.expanding().mean()
-    # We want to align this with full group index, filling NaNs for lost matches
-    avg_series = p.Series(index=group.index, dtype=float)
-    avg_series.loc[won.index] = cum_avg
-    return avg_series
-
-
-def calc_avg_tourney_level(group, level_map):
-    #
-    # Calculate the cumulative average level of tournaments played by the player.
-    # The level is mapped to a numeric score based on the provided level_map.
-    #
-    tourney_scores = group["tourney_level"].map(level_map)
-    return tourney_scores.expanding().mean()
-
-
-def calc_surface_pct(group):
-    #
-    # Calculate the cumulative percentage of matches played on each surface type.
-    # This returns a Series with the percentage of matches played on the current surface
-    # at each point in the group.
-    # The surface is expected to be a categorical variable with values like 'Hard', 'Clay', 'Grass', etc.
-    #
-    surface_counts = (
-        group["surface"]
-        .expanding()
-        .apply(
-            lambda x: x.value_counts(normalize=True).get(group.iloc[len(x) - 1], 0),
-            raw=False,
-        )
-    )
-    return surface_counts
+    return matches
 
 
 def compute_features(matches):
@@ -368,65 +354,90 @@ def compute_features(matches):
         "S": 1,  # Satellites/ITFs
     }
 
-    print("Calculating player percentage matches won...")
-    # pct matches won
-
-    player_matches = player_matches.sort_values(["player_id", "tourney_date"])
-
-    player_matches["pct_matches_won_prior"] = compute_expanding_feature(
-        player_matches, "player_id", "tourney_date", calc_pct_matches_won
-    )
-
-    player_matches = player_matches.compute()
-    player_matches = pd.from_pandas(player_matches, 8)
-    player_matches = player_matches.sort_values(["player_id", "tourney_date"])
-
-    print("Calculating player percentage grand slams won...")
-    # pct grand slams won
-    grand_slams = player_matches[player_matches["tourney_level"] == "G"]
-    pct_gs = compute_expanding_feature(
-        grand_slams, "player_id", "tourney_date", calc_pct_matches_won
-    )
-    pct_gs_df = pct_gs.to_frame(name="pct_grand_slams_won")
-    print("After calculating pct gs:(339)", type(pct_gs_df), pct_gs_df is None)
-    player_matches = player_matches.merge(
-        pct_gs_df,
-        how="left",
-        left_index=True,
-        right_index=True,
-    )
-
-    player_matches = player_matches.compute()
-    player_matches = pd.from_pandas(player_matches, 8)
-    player_matches = player_matches.sort_values(["player_id", "tourney_date"])
-
-    print("Calculating player percentage Wimbledon won...")
-    # pct Wimbledon won (assuming 'Wimbledon' in tourney_name)
-    wimbledon = player_matches[
-        player_matches["tourney_name"].str.contains("Wimbledon", case=False, na=False)
+    # compute rolling averages for certain columns
+    player_stats = [
+        col
+        for col in player_matches.columns
+        if col.startswith("player_") and not (col.endswith("id") or ("rank" in col))
     ]
-    pct_wimbledon = compute_expanding_feature(
-        wimbledon, "player_id", "tourney_date", calc_pct_matches_won
-    )
-    pct_wimbledon_df = pct_wimbledon.to_frame(name="pct_wimbledon_won")
-    print(
-        "After calculating pct wimbledon:(357)",
-        type(pct_wimbledon_df),
-        pct_wimbledon_df is None,
-    )
-    player_matches = player_matches.merge(
-        pct_wimbledon_df,
-        how="left",
-        left_index=True,
-        right_index=True,
-    )
 
-    player_matches = player_matches.compute()
-    player_matches = pd.from_pandas(player_matches, 8)
+    for col in player_stats:
+        print("Computing rolling averages for", col)
+        player_matches = player_matches.reset_index(drop=True)
+        player_matches = compute_rolling_averages(player_matches, "player_id", col)
+
+    # average tourney level of player
+    print("Calculating average tourney level of players...")
+    player_matches["tourney_level_numeric"] = player_matches["tourney_level"].map(
+        level_map, meta=("tourney_level_numeric", "int64")
+    )
+    player_matches = player_matches.reset_index(drop=True)
+
+    player_matches = compute_rolling_averages(
+        player_matches, "player_id", "tourney_level_numeric"
+    )
+    player_matches = player_matches.rename(
+        columns={"tourney_level_numeric_avg": "player_tourney_level_avg"}
+    )
+    player_matches = player_matches.drop("tourney_level_numeric", axis=1)
+
+    player_matches = player_matches.reset_index(drop=True)
+
+    # pct matches won
+    print("Calculating player percentage matches won...")
+
+    player_matches = player_matches.sort_values(["player_id", "tourney_date"])
+    player_matches = player_matches.reset_index(drop=True)
+
+    player_matches = compute_rolling_averages(player_matches, "player_id", "outcome")
+    player_matches = player_matches.rename(
+        columns={"outcome_avg": "player_pct_matches_won"}
+    )
+    player_matches = player_matches.persist()
+
+    # pct grand slams won
+    print("Calculating player percentage grand slams won...")
+    grand_slams = player_matches[player_matches["tourney_level"] == "G"]
+    grand_slams = grand_slams[["player_id", "match_id", "outcome", "tourney_date"]]
+
+    grand_slams = grand_slams.reset_index(drop=True)
+    grand_slams = compute_rolling_averages(grand_slams, "player_id", "outcome")
+    grand_slams = grand_slams.rename(
+        columns={"outcome_avg": "player_pct_grand_slams_won"}
+    )
+    grand_slams = grand_slams.drop(columns=["outcome"])
+
+    player_matches = player_matches.merge(
+        grand_slams, how="left", on=["match_id", "player_id", "tourney_date"]
+    )
+    player_matches = robust_ffill(player_matches, "player_pct_grand_slams_won")
+
+    player_matches = player_matches.persist()
+
+    # pct Wimbledon won (assuming 'Wimbledon' in tourney_name)
+    print("Calculating player percentage Wimbledon won...")
+    wimbledon = player_matches[player_matches["tourney_name"] == "Wimbledon"]
+    wimbledon = wimbledon[["player_id", "match_id", "outcome", "tourney_date"]]
+
+    wimbledon = wimbledon.reset_index(drop=True)
+    index_series = wimbledon.reset_index().index.to_series().compute()
+    duplicates_exist = index_series.duplicated().any()
+    print("Duplicates in index?", duplicates_exist)
+
+    wimbledon = compute_rolling_averages(wimbledon, "player_id", "outcome")
+    wimbledon = wimbledon.rename(columns={"outcome_avg": "player_pct_wimbledon_won"})
+    wimbledon = wimbledon.drop(columns=["outcome"])
+
+    player_matches = player_matches.merge(
+        wimbledon, how="left", on=["match_id", "player_id", "tourney_date"]
+    )
+    player_matches = robust_ffill(player_matches, "player_pct_wimbledon_won")
+
+    player_matches = player_matches.persist()
     player_matches = player_matches.sort_values(["player_id", "tourney_date"])
 
-    print("Calculating years on tour...")
     # years on tour
+    print("Calculating years on tour...")
     first_match = (
         player_matches.groupby("player_id")[["tourney_date"]]
         .min()
@@ -436,56 +447,39 @@ def compute_features(matches):
     print("After calculating first match:(377)", type(first_match), first_match is None)
 
     player_matches = player_matches.merge(first_match, on="player_id", how="left")
-    player_matches["years_on_tour"] = (
+    player_matches["player_years_on_tour"] = (
         player_matches["tourney_date"].dt.year
         - player_matches["first_match_date"].dt.year
     )
+    player_matches = player_matches.drop(columns=["first_match_date"])
 
-    player_matches = player_matches.compute()
-    player_matches = pd.from_pandas(player_matches, 8)
-    player_matches = player_matches.sort_values(["player_id", "tourney_date"])
-
-    print("Calculating average rank of opponents beaten...")
+    player_matches = player_matches.persist()
 
     # average rank of opponents beaten (only won matches)
-    def avg_opponent_rank_won(group):
-        group = group.sort_values("tourney_date")
-        ranks = []
-        group = group.compute()
-        for i, row in enumerate(group.itertuples()):
-            if i == 0:
-                ranks.append(np.nan)
-                continue
-            past = group.iloc[:i]
-            beaten_ranks = past.loc[past["outcome"] == 1, "opponent_rank"]
-            avg_rank = beaten_ranks.mean() if not beaten_ranks.empty else np.nan
-            ranks.append(avg_rank)
-        ranks[0] = max([r for r in ranks if not np.isnan(r)])
-        ranks_series = p.Series(ranks, index=group.index)
-        ranks_series = ranks_series.ffill()
-        return ranks_series
+    print("Calculating average rank of opponents beaten...")
+    won_matches = player_matches[player_matches["outcome"] == 1]
+    won_matches = won_matches[
+        [
+            "player_id",
+            "match_id",
+            "opponent_rank",
+            "opponent_rank_points",
+            "tourney_date",
+        ]
+    ]
+    won_matches = won_matches.reset_index(drop=True)
+    won_matches = compute_rolling_averages(won_matches, "player_id", "opponent_rank")
 
-    result = player_matches.groupby("player_id").apply(
-        avg_opponent_rank_won, meta=("avg_opponent_rank_won", "f8")
+    won_matches = won_matches.reset_index(drop=True)
+    won_matches = compute_rolling_averages(
+        won_matches, "player_id", "opponent_rank_points"
     )
-    print("After calculating avg opp rank won:(411)", type(result), result is None)
-    player_matches["avg_opponent_rank_won"] = result
-
-    player_matches = player_matches.compute()
-    player_matches = pd.from_pandas(player_matches, 8)
-    player_matches = player_matches.sort_values(["player_id", "tourney_date"])
-
-    # average level of tourney (numeric score)
-    print("Calculating average tournament level...")
-    player_matches["avg_tourney_level"] = compute_expanding_feature(
-        player_matches,
-        "player_id",
-        "tourney_date",
-        lambda g: calc_avg_tourney_level(g, level_map),
+    won_matches = won_matches.drop(columns=["opponent_rank", "opponent_rank_points"])
+    player_matches = player_matches.merge(
+        won_matches, how="left", on=["match_id", "player_id", "tourney_date"]
     )
 
-    player_matches = player_matches.compute()
-    player_matches = pd.from_pandas(player_matches, 8)
+    player_matches = player_matches.persist()
 
     # percentage matches played on surface
     # We calculate a separate percentage per surface type
@@ -493,69 +487,30 @@ def compute_features(matches):
 
     player_matches = player_matches.sort_values(["player_id", "tourney_date"])
 
-    # Loop over surface types
-    for surface_type in ["Hard", "Clay", "Grass", "Carpet", "Unknown"]:
-        col_name = f"pct_on_{surface_type.lower()}"
+    # one hot encode surface types, then avg every type
+    player_matches["surface"] = player_matches["surface"].astype("category")
+    player_matches["surface"] = player_matches["surface"].cat.set_categories(
+        ["Hard", "Clay", "Grass", "Carpet", "Unknown"]
+    )
+    surface_dummies = dd.get_dummies(player_matches["surface"], prefix="surface")
+    player_matches = player_matches.join(surface_dummies)
+    player_matches = player_matches.drop(columns=["surface"])
 
-        # Define the expanding surface percentage function
-        def surface_pct_func(group):
-            surfaces = group["surface"]
-            pct_values = []
-            surfaces = surfaces.compute()
-            for i in range(len(surfaces)):
-                past = surfaces.iloc[:i]
-                if len(past) == 0:
-                    pct_values.append(np.nan)
-                else:
-                    pct = (past == surface_type).mean()
-                    pct_values.append(pct)
-            result = p.Series(pct_values, index=group.index)
-            return result
+    player_matches = player_matches.persist()
 
-        result = player_matches.groupby("player_id").apply(
-            surface_pct_func,
-            meta=(col_name, "f8"),
-        )
-        print("After calculating pct surface:(454)", type(result), result is None)
+    surfaces = [col for col in player_matches.columns if col.startswith("surface")]
 
-        # Assign the Series directly to the DataFrame
-        player_matches[col_name] = result
+    for surface in surfaces:
+        player_matches = player_matches.reset_index(drop=True)
+        player_matches = compute_rolling_averages(player_matches, "player_id", surface)
 
     player_matches = player_matches.compute()
-    player_matches = pd.from_pandas(player_matches, 8)
+    player_matches = dd.from_pandas(player_matches)
     print("Finished computing player match features.")
     return player_matches
 
 
-def create_average_match_statistics(matches):
-    #
-    # Creates average match statistics for each player.
-    # The averages are calculated based on past performances before the match date.
-    # Args:
-    #     matches (DataFrame): DataFrame containing match data.
-    # Returns:
-    #     DataFrame: Matches DataFrame with added average statistics for each player.
-    #
-
-    print("Creating average match statistics for each player...")
-    matches = matches.sort_values(by="tourney_date")
-
-    # Calculate averages to winner and loser
-    matches = compute_historical_averages(matches, "winner_id", "w_")
-    matches = matches.persist()
-    matches = compute_historical_averages(matches, "loser_id", "l_")
-    matches = matches.persist()
-
-    matches = compute_historical_averages(matches, "winner_id", "winner_seed")
-    matches = matches.persist()
-    matches = compute_historical_averages(matches, "loser_id", "loser_seed")
-    matches = matches.persist()
-
-    print("Finished creating average match statistics for each player.")
-    return matches
-
-
-def merge_player_features(matches, player_features_df, prefix, player_id_col):
+def merge_player_features(matches, player_features_df):
     #
     # Merge player features into matches DataFrame for one player side (winner or loser),
     # without chunking.
@@ -569,36 +524,56 @@ def merge_player_features(matches, player_features_df, prefix, player_id_col):
     # Returns:
     #     DataFrame: Matches DataFrame enriched with player features
     #
-    print(f"Merging player features for {prefix} (no chunking)...")
+    print(f"Merging player features...")
 
-    # Drop unneeded columns before merge
-    features_to_merge = player_features_df.drop(
-        columns=[
-            "opponent_id",
-            "outcome",
-            "player_rank",
-            "opponent_rank",
-            "tourney_level",
-            "tourney_name",
-            "surface",
-        ],
-        errors="ignore",
+    # prepare winner and loser dataframes
+    winners = player_features_df[player_features_df["outcome"] == 1]
+    losers = player_features_df[player_features_df["outcome"] == 1]
+
+    cols_to_merge = [
+        col
+        for col in player_features_df.columns
+        if col.endswith("avg") or col.startswith("surface")
+    ]
+    cols_to_merge = cols_to_merge.append(
+        [
+            "player_id",
+            "tourney_date",
+            "match_id",
+            "match_num",
+            "player_pct_on_hard",
+            "player_pct_on_grass",
+            "player_pct_on_unknown",
+            "player_pct_on_carpet",
+            "player_pct_on_clay",
+            "player_years_on_tour",
+            "player_pct_wimbledon_won",
+            "player_pct_grand_slams_won",
+            "player_pct_matches_won",
+        ]
     )
-
-    # Rename columns with prefix, but keep player_id and tourney_date unchanged
-    rename_dict = {
-        col: f"{prefix}_{col}"
-        for col in features_to_merge.columns
-        if col not in ["player_id", "tourney_date"]
+    winners = winners[cols_to_merge]
+    winner_rename_dict = {
+        col: f"player1_{col}"
+        for col in winners.columns
+        if col not in ["player_id", "tourney_date", "match_id", "match_num"]
     }
-    features_to_merge = features_to_merge.rename(columns=rename_dict)
+    winners = winners.rename(columns=winner_rename_dict)
 
-    # Perform the merge
+    losers = losers[cols_to_merge]
+    loser_rename_dict = {
+        col: f"player2_{col}"
+        for col in losers.columns
+        if col not in ["player_id", "tourney_date", "match_id", "match_num"]
+    }
+    losers = losers.rename(columns=loser_rename_dict)
+
+    # merge winners
     merged = matches.merge(
-        features_to_merge,
+        winners,
         how="left",
-        left_on=[player_id_col, "tourney_date"],
-        right_on=["player_id", "tourney_date"],
+        left_on=["match_id", "match_num", "winner_id", "tourney_date"],
+        right_on=["match_id", "match_num", "player_id", "tourney_date"],
     )
 
     # Drop duplicate player_id column
@@ -606,11 +581,28 @@ def merge_player_features(matches, player_features_df, prefix, player_id_col):
         merged = merged.drop(columns=["player_id"])
 
     merged = merged.compute()
-    merged = pd.from_pandas(merged, 8)
-    print("After merging features:(537)", type(merged), merged is None)
+    merged = dd.from_pandas(merged)
 
-    print(f"Finished merging player features for {prefix}.")
-    return merged
+    # merge losers
+    full_merged = merged.merge(
+        losers,
+        how="left",
+        left_on=["match_id", "match_num", "loser_id", "tourney_date"],
+        right_on=["match_id", "match_num", "player_id", "tourney_date"],
+    )
+
+    # Drop duplicate player_id column
+    if "player_id" in full_merged.columns:
+        full_merged = full_merged.drop(columns=["player_id"])
+
+    full_merged = full_merged.drop(columns="surface")
+
+    full_merged = full_merged.compute()
+    full_merged = dd.from_pandas(merged)
+    print("After merging features:(537)", type(full_merged), full_merged is None)
+
+    print(f"Finished merging player features.")
+    return full_merged
 
 
 def randomize_player_order(matches):
@@ -668,7 +660,6 @@ def prepare_matches_data(matches):
     #     DataFrame: Matches DataFrame with renamed columns for winner and loser statistics.
     #
     print("Preparing matches data by renaming columns and setting winner...")
-    matches = matches.copy()
 
     matches["winner"] = matches["winner_id"]
 
@@ -685,7 +676,10 @@ def prepare_matches_data(matches):
             rename_map[col] = col.replace("l_", "player2_")
 
     matches = matches.rename(columns=rename_map)
-    matches = randomize_player_order(matches)
+
+    to_remove = [col for col in matches.columns if col.endswith("median")]
+    matches = matches.drop(columns=to_remove)
+
     print("After preparing data: (616)", type(matches), matches is None)
 
     print("Finished preparing matches data.")
@@ -706,22 +700,13 @@ def create_feature_dataframe(matches, players):
     print("Creating feature DataFrame from matches and players data...")
     matches = merge_all_player_info(matches, players)
     matches = matches.compute()
-    matches = pd.from_pandas(matches, npartitions=8)
-
-    matches = create_average_match_statistics(matches)
-    matches = matches.compute()
-    matches = pd.from_pandas(matches, npartitions=8)
+    matches = dd.from_pandas(matches)
 
     player_features = compute_features(matches)
-    matches = merge_player_features(matches, player_features, "player1", "winner_id")
-    matches = matches.compute()
-    matches = pd.from_pandas(matches, npartitions=8)
 
-    matches = merge_player_features(
-        matches, player_features, prefix="player2", player_id_col="loser_id"
-    )
+    matches = merge_player_features(matches, player_features)
     matches = matches.compute()
-    matches = pd.from_pandas(matches, npartitions=8)
+    matches = dd.from_pandas(matches)
 
     matches = prepare_matches_data(matches)
     matches.visualize(
@@ -730,7 +715,11 @@ def create_feature_dataframe(matches, players):
         rankdir="LR",
     )
     matches = matches.compute()
-    matches = pd.from_pandas(matches, npartitions=8)
+    matches = dd.from_pandas(matches)
+
+    matches = randomize_player_order(matches)
+    matches = matches.compute()
+    matches = dd.from_pandas(matches)
 
     # Remove unnecessary columns that are not needed for the analysis
     player1_stats_prefix = "player1_"
