@@ -168,8 +168,6 @@ def preprocess_atp_matches_data(matches):
         matches["loser_ht"].fillna(matches["loser_ht"].median()).astype(float)
     )
 
-    matches["winner_age_missing"] = matches["winner_age"].isna().astype(int)
-    matches["loser_age_missing"] = matches["loser_age"].isna().astype(int)
     matches["winner_age"] = (
         matches["winner_age"].fillna(matches["winner_age"].median()).astype(float)
     )

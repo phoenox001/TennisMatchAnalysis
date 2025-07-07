@@ -598,34 +598,36 @@ def randomize_player_order(matches):
     # Returns:
     #     DataFrame: DataFrame with player1 and player2 columns randomly flipped.
     #
+    df = matches.copy()
 
-    print("Randomizing player order in matches DataFrame...")
+    # Alle player1_ und player2_ Spalten finden
+    player1_cols = [col for col in df.columns if col.startswith("player1_")]
+    player2_cols = [col for col in df.columns if col.startswith("player2_")]
 
-    matches = matches.copy()
-    flip_mask = np.random.rand(len(matches)) > 0.5
+    # Sicherstellen, dass jede player1_ eine passende player2_ Spalte hat
+    common_suffixes = [
+        col.replace("player1_", "")
+        for col in player1_cols
+        if f"player2_{col.replace('player1_', '')}" in player2_cols
+    ]
 
-    # Swap player1_ and player2_ columns
-    for col in matches.columns:
-        if col.startswith("player1_"):
-            p2_col = col.replace("player1_", "player2_")
-            if p2_col in matches.columns:
-                tmp = matches.loc[flip_mask, col].copy()
-                matches.loc[flip_mask, col] = matches.loc[flip_mask, p2_col]
-                matches.loc[flip_mask, p2_col] = tmp
+    # Flip-Maske erstellen: True = vertauschen
+    flip_mask = np.random.rand(len(df)) > 0.5
 
-    # Swap player1_id and player2_id
-    tmp_id = matches.loc[flip_mask, "player1_id"].copy()
-    matches.loc[flip_mask, "player1_id"] = matches.loc[flip_mask, "player2_id"]
-    matches.loc[flip_mask, "player2_id"] = tmp_id
+    for suffix in common_suffixes:
+        col1 = f"player1_{suffix}"
+        col2 = f"player2_{suffix}"
 
-    # Recompute outcome
-    matches["player1_wins"] = (matches["player1_id"] == matches["winner"]).astype(int)
+        temp = df.loc[flip_mask, col1].copy()
+        df.loc[flip_mask, col1] = df.loc[flip_mask, col2]
+        df.loc[flip_mask, col2] = temp
 
-    # Drop the now-redundant winner column
-    matches = matches.drop(columns=["winner"])
+    # Optional: Neue Zielvariable erstellen (z.B. player1 gewinnt?)
+    if "winner" in df.columns and "player1_id" in df.columns:
+        df["player1_wins"] = (df["player1_id"] == df["winner"]).astype(int)
+        df = df.drop(columns=["winner"])  # wenn nicht mehr gebraucht
 
-    print("Finished randomizing player order.")
-    return matches
+    return df
 
 
 def prepare_matches_data(matches):
