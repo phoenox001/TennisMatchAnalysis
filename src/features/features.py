@@ -1,9 +1,7 @@
 # File: src/features/features.py
 
 import os
-import utils.dask_wrapper as pd
-import dask.dataframe as dd
-import pandas as p
+import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import features.atp_matches as atp_matches
@@ -98,7 +96,7 @@ def add_player_info(matches, players, role):
     )
     print("Before merging matches:(97)", type(matches), matches is None)
     # Use dask_merge_asof wrapper instead of pd.merge_asof
-    enriched = pd.dask_merge_asof(
+    enriched = pd.merge_asof(
         left=matches,
         right=players_renamed,
         by=player_id_col,
@@ -122,20 +120,14 @@ def merge_all_player_info(matches, players):
     #
 
     print("Merging player information for both winner and loser roles...")
-    matches = matches.compute()
     print("Anzahl rows data:", len(matches))
-    matches = dd.from_pandas(matches)
     matches_with_winner = add_player_info(matches, players, role="winner")
 
-    matches_with_winner = matches_with_winner.compute()
     print("Anzahl rows data:", len(matches_with_winner))
-    matches_with_winner = dd.from_pandas(matches_with_winner)
 
     full_information = add_player_info(matches_with_winner, players, role="loser")
 
-    full_information = full_information.compute()
     print("Anzahl rows data:", len(full_information))
-    full_information = dd.from_pandas(full_information)
 
     full_information = full_information.drop(
         [
@@ -219,6 +211,8 @@ def create_player_match_df(matches):
     losers = matches[
         [
             "tourney_date",
+            "match_id",
+            "match_num",
             "loser_id",
             "winner_id",
             "surface",
@@ -257,8 +251,7 @@ def create_player_match_df(matches):
     # Combine and sort
     winners = winners.reset_index(drop=True)
     losers = losers.reset_index(drop=True)
-    player_matches = dd.concat([winners, losers], ignore_index=True)
-    player_matches = player_matches.compute()
+    player_matches = pd.concat([winners, losers], ignore_index=True)
     player_matches = player_matches.sort_values(
         ["player_id", "tourney_date"]
     ).reset_index(drop=True)
@@ -268,27 +261,15 @@ def create_player_match_df(matches):
         player_matches is None,
     )
 
-    player_matches = dd.from_pandas(player_matches)
+    print(
+        "Missing values in match_id?",
+        len(player_matches[player_matches["match_id"].isna()]),
+    )
+
     return player_matches
 
 
-def robust_ffill(df, columns=None):
-    if columns is None:
-        columns = df.columns
-    elif isinstance(columns, str):
-        columns = [columns]
-
-    filled_part = df[columns].map_partitions(
-        lambda part: part.ffill(), meta={col: df[col].dtype for col in columns}
-    )
-
-    for col in columns:
-        df[col] = filled_part[col]
-
-    return df
-
-
-def compute_rolling_averages(matches, player_col, col_name):
+def compute_expanding_averages(matches, player_col, col_name):
     #
     # Computes rolling averages for player statistics before each match date.
 
@@ -300,35 +281,23 @@ def compute_rolling_averages(matches, player_col, col_name):
     #     DataFrame: Matches DataFrame with added average statistics for each player.
     #
 
-    print("Start computing match statistics for", col_name)
+    print("Computing match statistics for", col_name)
     avg_col = f"{col_name}_avg"
 
     matches = matches.reset_index(drop=True)
-    index_series = matches.index.to_series().compute()
-    duplicates_exist = index_series.duplicated().any()
-    print("Duplicates in index?", duplicates_exist)
 
-    # Shift to exclude current match
-    matches["cumsum_prev"] = matches.groupby(player_col)[col_name].cumsum().shift(1)
-    matches["cumsum_prev"] = matches["cumsum_prev"].fillna(0.0)
-    matches["cumcount_prev"] = matches.groupby(player_col)[col_name].cumcount().shift(1)
-    matches["cumcount_prev"] = matches["cumcount_prev"].fillna(1.0).replace(0, 1)
-
-    # Calculate average, guarding division-by-zero
-    matches[avg_col] = matches["cumsum_prev"] / matches["cumcount_prev"]
+    matches[avg_col] = (
+        matches.sort_values([player_col, "tourney_date"])  # Ensure correct order
+        .groupby(player_col)[col_name]
+        .expanding()
+        .mean()
+        .shift(1)
+        .reset_index(level=0, drop=True)
+    )
     matches[avg_col] = matches[avg_col].fillna(0.0)
+
     matches = matches.reset_index(drop=True)
-
-    # Clean up temporary columns
-    matches = matches.drop(columns=["cumsum_prev", "cumcount_prev"])
-    print("Computing match statistics for", col_name)
-    matches = matches.compute()
-    matches = pd.from_pandas(matches, 8)
     matches = matches.sort_values(by="tourney_date")
-
-    index_series = matches.index.to_series().compute()
-    duplicates_exist = index_series.duplicated().any()
-    print("Duplicates in index after computing?", duplicates_exist)
 
     return matches
 
@@ -365,22 +334,18 @@ def compute_features(matches):
 
     for col in player_stats:
         print("Computing rolling averages for", col)
-        player_matches = player_matches.reset_index(drop=True).compute()
-        print("Anzahl rows player_matches:", len(player_matches))
-        player_matches = dd.from_pandas(player_matches)
-        player_matches = compute_rolling_averages(player_matches, "player_id", col)
+        player_matches = player_matches.reset_index(drop=True)
+        player_matches = compute_expanding_averages(player_matches, "player_id", col)
         player_matches = player_matches.drop(columns=col)
 
     # average tourney level of player
     print("Calculating average tourney level of players...")
     player_matches["tourney_level_numeric"] = player_matches["tourney_level"].map(
-        level_map, meta=("tourney_level_numeric", "int64")
+        level_map
     )
-    player_matches = player_matches.reset_index(drop=True).compute()
-    print("Anzahl rows player_matches:", len(player_matches))
-    player_matches = dd.from_pandas(player_matches)
 
-    player_matches = compute_rolling_averages(
+    player_matches = player_matches.reset_index(drop=True)
+    player_matches = compute_expanding_averages(
         player_matches, "player_id", "tourney_level_numeric"
     )
     player_matches = player_matches.rename(
@@ -388,33 +353,24 @@ def compute_features(matches):
     )
     player_matches = player_matches.drop(columns=["tourney_level_numeric"])
 
-    player_matches = player_matches.reset_index(drop=True).compute()
-    print("Anzahl rows player_matches:", len(player_matches))
-    player_matches = dd.from_pandas(player_matches)
-
     # pct matches won
     print("Calculating player percentage matches won...")
 
     player_matches = player_matches.sort_values(["player_id", "tourney_date"])
-    player_matches = player_matches.reset_index(drop=True).compute()
-    print("Anzahl rows player_matches:", len(player_matches))
-    player_matches = dd.from_pandas(player_matches)
+    player_matches = player_matches.reset_index(drop=True)
 
-    player_matches = compute_rolling_averages(player_matches, "player_id", "outcome")
+    player_matches = compute_expanding_averages(player_matches, "player_id", "outcome")
     player_matches = player_matches.rename(
         columns={"outcome_avg": "player_pct_matches_won"}
     )
-    player_matches = player_matches.persist()
 
     # pct grand slams won
     print("Calculating player percentage grand slams won...")
     grand_slams = player_matches[player_matches["tourney_level"] == "G"]
     grand_slams = grand_slams[["player_id", "match_id", "outcome", "tourney_date"]]
 
-    grand_slams = grand_slams.reset_index(drop=True).compute()
-    print("Anzahl rows player_matches:", len(player_matches))
-    grand_slams = dd.from_pandas(grand_slams)
-    grand_slams = compute_rolling_averages(grand_slams, "player_id", "outcome")
+    grand_slams = grand_slams.reset_index(drop=True)
+    grand_slams = compute_expanding_averages(grand_slams, "player_id", "outcome")
     grand_slams = grand_slams.rename(
         columns={"outcome_avg": "player_pct_grand_slams_won"}
     )
@@ -423,37 +379,29 @@ def compute_features(matches):
     player_matches = player_matches.merge(
         grand_slams, how="left", on=["match_id", "player_id", "tourney_date"]
     )
-    player_matches = robust_ffill(player_matches, "player_pct_grand_slams_won")
-    player_matches = player_matches.reset_index(drop=True).compute()
-    print("Anzahl rows player_matches:", len(player_matches))
-    player_matches = dd.from_pandas(player_matches)
-
-    player_matches = player_matches.persist()
+    player_matches["player_pct_grand_slams_won"] = player_matches[
+        "player_pct_grand_slams_won"
+    ].ffill()
+    player_matches = player_matches.reset_index(drop=True)
 
     # pct Wimbledon won (assuming 'Wimbledon' in tourney_name)
     print("Calculating player percentage Wimbledon won...")
     wimbledon = player_matches[player_matches["tourney_name"] == "Wimbledon"]
     wimbledon = wimbledon[["player_id", "match_id", "outcome", "tourney_date"]]
 
-    wimbledon = wimbledon.reset_index(drop=True).compute()
-    wimbledon = dd.from_pandas(wimbledon)
-    index_series = wimbledon.reset_index().index.to_series().compute()
-    duplicates_exist = index_series.duplicated().any()
-    print("Duplicates in index?", duplicates_exist)
-
-    wimbledon = compute_rolling_averages(wimbledon, "player_id", "outcome")
+    wimbledon = wimbledon.reset_index(drop=True)
+    wimbledon = compute_expanding_averages(wimbledon, "player_id", "outcome")
     wimbledon = wimbledon.rename(columns={"outcome_avg": "player_pct_wimbledon_won"})
     wimbledon = wimbledon.drop(columns=["outcome"])
 
     player_matches = player_matches.merge(
         wimbledon, how="left", on=["match_id", "player_id", "tourney_date"]
     )
-    player_matches = robust_ffill(player_matches, "player_pct_wimbledon_won")
-    player_matches = player_matches.reset_index(drop=True).compute()
-    print("Anzahl rows player_matches:", len(player_matches))
-    player_matches = dd.from_pandas(player_matches)
+    player_matches["player_pct_wimbledon_won"] = player_matches[
+        "player_pct_wimbledon_won"
+    ].ffill()
+    player_matches = player_matches.reset_index(drop=True)
 
-    player_matches = player_matches.persist()
     player_matches = player_matches.sort_values(["player_id", "tourney_date"])
 
     # years on tour
@@ -472,11 +420,7 @@ def compute_features(matches):
         - player_matches["first_match_date"].dt.year
     )
     player_matches = player_matches.drop(columns=["first_match_date"])
-    player_matches = player_matches.reset_index(drop=True).compute()
-    print("Anzahl rows player_matches:", len(player_matches))
-    player_matches = dd.from_pandas(player_matches)
-
-    player_matches = player_matches.persist()
+    player_matches = player_matches.reset_index(drop=True)
 
     # average rank of opponents beaten (only won matches)
     print("Calculating average rank of opponents beaten...")
@@ -490,27 +434,30 @@ def compute_features(matches):
             "tourney_date",
         ]
     ]
-    won_matches = won_matches.reset_index(drop=True).compute()
-    won_matches = dd.from_pandas(won_matches)
-    won_matches = compute_rolling_averages(won_matches, "player_id", "opponent_rank")
+    won_matches = won_matches.reset_index(drop=True)
+    won_matches = compute_expanding_averages(won_matches, "player_id", "opponent_rank")
 
-    won_matches = won_matches.reset_index(drop=True).compute()
-    won_matches = dd.from_pandas(won_matches)
-    won_matches = compute_rolling_averages(
+    won_matches = won_matches.reset_index(drop=True)
+    won_matches = compute_expanding_averages(
         won_matches, "player_id", "opponent_rank_points"
     )
     won_matches = won_matches.drop(columns=["opponent_rank", "opponent_rank_points"])
     player_matches = player_matches.merge(
         won_matches, how="left", on=["match_id", "player_id", "tourney_date"]
     )
-    player_matches = player_matches.reset_index(drop=True).compute()
-    print("Anzahl rows player_matches:", len(player_matches))
-    player_matches = dd.from_pandas(player_matches)
+    player_matches = player_matches.reset_index(drop=True)
     player_matches = player_matches.drop(
         columns=["opponent_rank", "opponent_rank_points"]
     )
-
-    player_matches = player_matches.persist()
+    player_matches[["opponent_rank_avg", "opponent_rank_points_avg"]] = player_matches[
+        ["opponent_rank_avg", "opponent_rank_points_avg"]
+    ].ffill()
+    player_matches = player_matches.rename(
+        columns={
+            "opponent_rank_avg": "player_avg_rank_beaten",
+            "opponent_rank_points_avg": "player_avg_rank_points_beaten",
+        }
+    )
 
     # percentage matches played on surface
     # We calculate a separate percentage per surface type
@@ -522,8 +469,8 @@ def compute_features(matches):
     player_matches["surface"] = player_matches["surface"].cat.set_categories(
         ["Hard", "Clay", "Grass", "Carpet", "Unknown"]
     )
-    surface_dummies = dd.get_dummies(player_matches["surface"], prefix="surface")
-    player_matches = dd.merge(
+    surface_dummies = pd.get_dummies(player_matches["surface"], prefix="surface")
+    player_matches = pd.merge(
         left=player_matches,
         right=surface_dummies,
         left_index=True,
@@ -532,20 +479,19 @@ def compute_features(matches):
     )
     player_matches = player_matches.drop(columns=["surface"])
 
-    player_matches = player_matches.persist()
-
     surfaces = [col for col in player_matches.columns if col.startswith("surface")]
     player_matches = player_matches.sort_values(["player_id", "tourney_date"])
 
     for surface in surfaces:
-        player_matches = player_matches.reset_index(drop=True).compute()
-        print("Anzahl rows player_matches:", len(player_matches))
-        player_matches = dd.from_pandas(player_matches)
-        player_matches = compute_rolling_averages(player_matches, "player_id", surface)
+        player_matches = player_matches.reset_index(drop=True)
+        player_matches = compute_expanding_averages(
+            player_matches, "player_id", surface
+        )
         player_matches = player_matches.drop(columns=surface)
+        player_matches = player_matches.rename(
+            columns={f"{surface}_avg": f"player_{surface}_avg"}
+        )
 
-    player_matches = player_matches.compute()
-    print("anzahl rows player_features:", player_matches)
     print("Finished computing player match features.")
     return player_matches
 
@@ -567,32 +513,23 @@ def merge_player_features(matches, player_features_df):
     print(f"Merging player features...")
 
     # prepare winner and loser dataframes
-    player_features_df = dd.from_pandas(player_features_df)
     winners = player_features_df[player_features_df["outcome"] == 1]
-    losers = player_features_df[player_features_df["outcome"] == 1]
+    losers = player_features_df[player_features_df["outcome"] == 0]
 
-    cols_to_merge = [
-        col
-        for col in player_features_df.columns
-        if col.endswith("avg") or col.startswith("surface")
+    cols_to_merge = [col for col in player_features_df.columns if col.endswith("avg")]
+    cols_to_merge += [
+        "player_id",
+        "tourney_date",
+        "match_id",
+        "match_num",
+        "player_years_on_tour",
+        "player_pct_wimbledon_won",
+        "player_pct_grand_slams_won",
+        "player_pct_matches_won",
+        "player_avg_rank_beaten",
+        "player_avg_rank_points_beaten",
     ]
-    cols_to_merge = cols_to_merge.append(
-        [
-            "player_id",
-            "tourney_date",
-            "match_id",
-            "match_num",
-            "player_pct_on_hard",
-            "player_pct_on_grass",
-            "player_pct_on_unknown",
-            "player_pct_on_carpet",
-            "player_pct_on_clay",
-            "player_years_on_tour",
-            "player_pct_wimbledon_won",
-            "player_pct_grand_slams_won",
-            "player_pct_matches_won",
-        ]
-    )
+
     winners = winners[cols_to_merge]
     winner_rename_dict = {
         col: f"player1_{col}"
@@ -621,9 +558,6 @@ def merge_player_features(matches, player_features_df):
     if "player_id" in merged.columns:
         merged = merged.drop(columns=["player_id"])
 
-    merged = merged.compute()
-    merged = dd.from_pandas(merged)
-
     # merge losers
     full_merged = merged.merge(
         losers,
@@ -637,10 +571,6 @@ def merge_player_features(matches, player_features_df):
         full_merged = full_merged.drop(columns=["player_id"])
 
     full_merged = full_merged.drop(columns="surface")
-
-    full_merged = full_merged.compute()
-    full_merged = dd.from_pandas(merged)
-    print("After merging features:(537)", type(full_merged), full_merged is None)
 
     print(f"Finished merging player features.")
     return full_merged
@@ -659,33 +589,29 @@ def randomize_player_order(matches):
 
     print("Randomizing player order in matches DataFrame...")
 
-    def flip_players(partition):
-        flip_mask = np.random.rand(len(partition)) > 0.5
-        partition = partition.copy()
+    matches = matches.copy()
+    flip_mask = np.random.rand(len(matches)) > 0.5
 
-        # Swap player1 and player2 columns
-        for col in partition.columns:
-            if col.startswith("player1_"):
-                p2_col = col.replace("player1_", "player2_")
-                if p2_col in partition.columns:
-                    tmp = partition.loc[flip_mask, col].copy()
-                    partition.loc[flip_mask, col] = partition.loc[flip_mask, p2_col]
-                    partition.loc[flip_mask, p2_col] = tmp
+    # Swap player1_ and player2_ columns
+    for col in matches.columns:
+        if col.startswith("player1_"):
+            p2_col = col.replace("player1_", "player2_")
+            if p2_col in matches.columns:
+                tmp = matches.loc[flip_mask, col].copy()
+                matches.loc[flip_mask, col] = matches.loc[flip_mask, p2_col]
+                matches.loc[flip_mask, p2_col] = tmp
 
-        # Swap player1_id and player2_id
-        tmp_id = partition.loc[flip_mask, "player1_id"].copy()
-        partition.loc[flip_mask, "player1_id"] = partition.loc[flip_mask, "player2_id"]
-        partition.loc[flip_mask, "player2_id"] = tmp_id
+    # Swap player1_id and player2_id
+    tmp_id = matches.loc[flip_mask, "player1_id"].copy()
+    matches.loc[flip_mask, "player1_id"] = matches.loc[flip_mask, "player2_id"]
+    matches.loc[flip_mask, "player2_id"] = tmp_id
 
-        # Compute new outcome label
-        partition["player1_wins"] = (
-            partition["player1_id"] == partition["winner"]
-        ).astype(int)
+    # Recompute outcome
+    matches["player1_wins"] = (matches["player1_id"] == matches["winner"]).astype(int)
 
-        print("After preparing data:(579)", type(partition), partition is None)
-        return partition.drop(columns=["winner"])
+    # Drop the now-redundant winner column
+    matches = matches.drop(columns=["winner"])
 
-    matches = matches.map_partitions(flip_players)
     print("Finished randomizing player order.")
     return matches
 
@@ -721,8 +647,6 @@ def prepare_matches_data(matches):
     to_remove = [col for col in matches.columns if col.endswith("median")]
     matches = matches.drop(columns=to_remove)
 
-    print("After preparing data: (616)", type(matches), matches is None)
-
     print("Finished preparing matches data.")
     return matches
 
@@ -742,64 +666,22 @@ def create_feature_dataframe(matches, players):
     player_features_path = (
         "/Users/tim/Documents/Projects/TennisMatchAnalysis/data/player_features.parquet"
     )
+    matches = merge_all_player_info(matches, players)
 
     if os.path.exists(player_features_path):
         print("Parquet file exists, reading...")
-        player_features = dd.read_parquet(player_features_path)
-        player_features = player_features.compute()
+        player_features = pd.read_parquet(player_features_path)
         print(player_features.head())
     else:
         print("File does not exist. Creating from source or skipping.")
-        matches = merge_all_player_info(matches, players)
-        matches = matches.compute()
-        matches = dd.from_pandas(matches)
-
         player_features = compute_features(matches)
         player_features.to_parquet(player_features_path)
 
     matches = merge_player_features(matches, player_features)
-    matches = matches.compute()
-    matches = dd.from_pandas(matches)
 
     matches = prepare_matches_data(matches)
-    matches.visualize(
-        filename="/Users/tim/Documents/Projects/TennisMatchAnalysis/img/dask_graph",
-        format="svg",
-        rankdir="LR",
-    )
-    matches = matches.compute()
-    matches = dd.from_pandas(matches)
 
     matches = randomize_player_order(matches)
-    matches = matches.compute()
-    matches = dd.from_pandas(matches)
 
-    # Remove unnecessary columns that are not needed for the analysis
-    player1_stats_prefix = "player1_"
-    player2_stats_prefix = "player2_"
-
-    leak_cols = ["score", "minutes", "round", "match_num"]
-    stats_to_remove = [
-        "ace",
-        "df",
-        "svpt",
-        "1stIn",
-        "1stWon",
-        "2ndWon",
-        "SvGms",
-        "bpSaved",
-        "bpFaced",
-    ]
-    cols_to_drop = []
-
-    for stat in stats_to_remove:
-        cols_to_drop.append(f"{player1_stats_prefix}{stat}")
-        cols_to_drop.append(f"{player2_stats_prefix}{stat}")
-    cols_to_drop.extend(leak_cols)
-
-    cols_to_drop = [col for col in cols_to_drop if col in matches.columns]
-    matches_reduced = matches.drop(columns=cols_to_drop)
-
-    matches_reduced = matches_reduced.compute()
     print("Finished creating feature DataFrame.")
-    return matches_reduced
+    return matches

@@ -1,7 +1,6 @@
 # File: src/features/player_rankings.py
 
-import utils.dask_wrapper as pd
-import pandas as p
+import pandas as pd
 import numpy as np
 import os
 import glob
@@ -106,8 +105,8 @@ def preprocess_player_data(players):
     players = players.copy()
     players = players.drop_duplicates(subset=["player_id"], keep="first")
 
-    players = players[pd.dask_notna(players["name_first"])]
-    players = players[pd.dask_notna(players["name_last"])]
+    players = players[pd.notna(players["name_first"])]
+    players = players[pd.notna(players["name_last"])]
 
     players["points_missing"] = players["points"].isna().astype(int)
     players["points"] = players["points"].fillna(0).astype(int)

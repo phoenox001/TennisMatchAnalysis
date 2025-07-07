@@ -1,6 +1,6 @@
 # File: src/features/atp_matches.py
 
-import utils.dask_wrapper as pd
+import pandas as pd
 import numpy as np
 import os
 import glob
@@ -128,7 +128,7 @@ def impute_missing_match_stats(
 
         matches[col] = matches[col].fillna(matches[f"{col}_median"])
 
-        global_median = matches[col].median_approximate()
+        global_median = matches[col].median()
         matches[col] = matches[col].fillna(global_median)
 
         matches.drop(columns=[f"{col}_median"])
@@ -155,8 +155,8 @@ def preprocess_atp_matches_data(matches):
     matches["loser_id"] = matches["loser_id"].astype("int64")
 
     matches["tourney_date"] = pd.to_datetime(matches["tourney_date"], format="%Y%m%d")
-    matches["winner_is_seeded"] = pd.dask_notna(matches["winner_seed"]).astype(int)
-    matches["loser_is_seeded"] = pd.dask_notna(matches["loser_seed"]).astype(int)
+    matches["winner_is_seeded"] = pd.notna(matches["winner_seed"]).astype(int)
+    matches["loser_is_seeded"] = pd.notna(matches["loser_seed"]).astype(int)
     matches["winner_seed"] = matches["winner_seed"].fillna(0).astype(int)
     matches["loser_seed"] = matches["loser_seed"].fillna(0).astype(int)
 
@@ -165,12 +165,12 @@ def preprocess_atp_matches_data(matches):
 
     matches["winner_ht"] = (
         matches["winner_ht"]
-        .fillna(matches["winner_ht"].median_approximate())
+        .fillna(matches["winner_ht"].median())
         .astype(float)
     )
     matches["loser_ht"] = (
         matches["loser_ht"]
-        .fillna(matches["loser_ht"].median_approximate())
+        .fillna(matches["loser_ht"].median())
         .astype(float)
     )
 
@@ -178,12 +178,12 @@ def preprocess_atp_matches_data(matches):
     matches["loser_age_missing"] = matches["loser_age"].isna().astype(int)
     matches["winner_age"] = (
         matches["winner_age"]
-        .fillna(matches["winner_age"].median_approximate())
+        .fillna(matches["winner_age"].median())
         .astype(float)
     )
     matches["loser_age"] = (
         matches["loser_age"]
-        .fillna(matches["loser_age"].median_approximate())
+        .fillna(matches["loser_age"].median())
         .astype(float)
     )
 
