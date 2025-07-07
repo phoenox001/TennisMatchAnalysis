@@ -582,8 +582,6 @@ def merge_player_features(matches, player_features_df):
     if "player_id" in full_merged.columns:
         full_merged = full_merged.drop(columns=["player_id"])
 
-    full_merged = full_merged.drop(columns="surface")
-
     print(f"Finished merging player features.")
     return full_merged
 

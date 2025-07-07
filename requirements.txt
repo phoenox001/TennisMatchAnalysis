@@ -3,8 +3,9 @@ numpy
 scikit-learn
 seaborn
 XGBoost
+catboost
+lightgbm
 matplotlib
 streamlit
 SHAP
-dask
 fastparquet
