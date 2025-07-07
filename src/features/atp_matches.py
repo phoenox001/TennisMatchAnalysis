@@ -114,8 +114,6 @@ def impute_missing_match_stats(
     matches = matches.copy()
 
     for col in stat_columns:
-        missing_flag = f"{col}_missing"
-        matches[missing_flag] = matches[col].isna().astype(int)
 
         grouped_medians = (
             matches.groupby(group_context)[col]
@@ -164,27 +162,19 @@ def preprocess_atp_matches_data(matches):
     matches["loser_entry"] = matches["loser_entry"].fillna("DE").astype(str)
 
     matches["winner_ht"] = (
-        matches["winner_ht"]
-        .fillna(matches["winner_ht"].median())
-        .astype(float)
+        matches["winner_ht"].fillna(matches["winner_ht"].median()).astype(float)
     )
     matches["loser_ht"] = (
-        matches["loser_ht"]
-        .fillna(matches["loser_ht"].median())
-        .astype(float)
+        matches["loser_ht"].fillna(matches["loser_ht"].median()).astype(float)
     )
 
     matches["winner_age_missing"] = matches["winner_age"].isna().astype(int)
     matches["loser_age_missing"] = matches["loser_age"].isna().astype(int)
     matches["winner_age"] = (
-        matches["winner_age"]
-        .fillna(matches["winner_age"].median())
-        .astype(float)
+        matches["winner_age"].fillna(matches["winner_age"].median()).astype(float)
     )
     matches["loser_age"] = (
-        matches["loser_age"]
-        .fillna(matches["loser_age"].median())
-        .astype(float)
+        matches["loser_age"].fillna(matches["loser_age"].median()).astype(float)
     )
 
     matches["winner_hand"] = matches["winner_hand"].fillna("U").astype(str)

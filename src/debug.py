@@ -19,13 +19,3 @@ features.to_parquet(
     os.path.join(root_dir, "data", "test_data.parquet"),
     index=False,
 )
-
-print(f"Features shape: {features.shape}")
-print(f"Features columns: {features.columns.tolist()}")
-
-# percentage of missing values per column
-percent_missing = features.isnull().sum() * 100 / len(features)
-missing_value_df = pd.DataFrame(
-    {"column_name": features.columns, "percent_missing": percent_missing}
-)
-print(missing_value_df)

@@ -108,12 +108,9 @@ def preprocess_player_data(players):
     players = players[pd.notna(players["name_first"])]
     players = players[pd.notna(players["name_last"])]
 
-    players["points_missing"] = players["points"].isna().astype(int)
     players["points"] = players["points"].fillna(0).astype(int)
 
     # players.loc["height"] = players["height"].fillna(players["height"].median())
-    players["ioc"] = players["ioc"].str.upper()
-    players["ioc"] = players["ioc"].fillna("Unknown")
     players["hand"] = players["hand"].fillna("U")
     players["ranking_date"] = pd.to_datetime(
         players["ranking_date"], format="%Y%m%d", errors="coerce"
@@ -121,7 +118,9 @@ def preprocess_player_data(players):
 
     print(players.columns)
 
-    players = players.drop(columns=["wikidata_id", "dob", "height"], errors="ignore")
+    players = players.drop(
+        columns=["wikidata_id", "dob", "height", "ioc"], errors="ignore"
+    )
     players["player_id"] = players["player_id"].astype("int64")
     players = players.sort_values(by="player_id")
 

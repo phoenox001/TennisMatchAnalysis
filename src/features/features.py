@@ -123,11 +123,7 @@ def merge_all_player_info(matches, players):
     print("Anzahl rows data:", len(matches))
     matches_with_winner = add_player_info(matches, players, role="winner")
 
-    print("Anzahl rows data:", len(matches_with_winner))
-
     full_information = add_player_info(matches_with_winner, players, role="loser")
-
-    print("Anzahl rows data:", len(full_information))
 
     full_information = full_information.drop(
         [
@@ -135,6 +131,8 @@ def merge_all_player_info(matches, players):
             "loser_rank_official",
             "winner_points_official",
             "loser_points_official",
+            "winner_hand_official",
+            "loser_hand_official",
         ],
         errors="ignore",
         axis=1,
@@ -531,19 +529,33 @@ def merge_player_features(matches, player_features_df):
     ]
 
     winners = winners[cols_to_merge]
-    winner_rename_dict = {
-        col: f"player1_{col}"
-        for col in winners.columns
-        if col not in ["player_id", "tourney_date", "match_id", "match_num"]
-    }
+
+    winner_rename_dict = {}
+    for col in winners.columns:
+        if col.startswith("player_") and col not in [
+            "player_id",
+            "tourney_date",
+            "match_id",
+            "match_num",
+        ]:
+            winner_rename_dict[col] = col.replace("player_", "player1_")
+        elif col not in ["player_id", "tourney_date", "match_id", "match_num"]:
+            winner_rename_dict[col] = f"player1_{col}"
     winners = winners.rename(columns=winner_rename_dict)
 
     losers = losers[cols_to_merge]
-    loser_rename_dict = {
-        col: f"player2_{col}"
-        for col in losers.columns
-        if col not in ["player_id", "tourney_date", "match_id", "match_num"]
-    }
+
+    loser_rename_dict = {}
+    for col in losers.columns:
+        if col.startswith("player_") and col not in [
+            "player_id",
+            "tourney_date",
+            "match_id",
+            "match_num",
+        ]:
+            loser_rename_dict[col] = col.replace("player_", "player2_")
+        elif col not in ["player_id", "tourney_date", "match_id", "match_num"]:
+            winner_rename_dict[col] = f"player2_{col}"
     losers = losers.rename(columns=loser_rename_dict)
 
     # merge winners
