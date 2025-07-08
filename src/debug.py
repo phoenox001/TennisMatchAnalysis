@@ -27,32 +27,6 @@ print(ensemble_results)
 # print(model)
 
 
-import matplotlib.pyplot as plt
-
-# VotingClassifier does not have feature_importances_, so we aggregate from its estimators
-feature_names = X.columns
-
-importances = []
-for name, estimator in ensemble_model.named_estimators_.items():
-    if hasattr(estimator, "feature_importances_"):
-        importances.append(estimator.feature_importances_)
-    elif hasattr(estimator, "coef_"):
-        importances.append(np.abs(estimator.coef_).flatten())
-    else:
-        # If the estimator does not support feature importances, skip it
-        continue
-
-if importances:
-    mean_importance = np.mean(importances, axis=0)
-    importance_df = pd.DataFrame(
-        {"feature": feature_names, "importance": mean_importance}
-    ).sort_values("importance", ascending=False)
-
-    print("\nTop 10 wichtigste Features:")
-    print(importance_df.head(10))
-else:
-    print("None of the ensemble's estimators provide feature importances.")
-
 
 # Beispiel für die Verwendung:
 """
@@ -74,7 +48,6 @@ best_model, best_results = get_best_model_from_cv(results_df, models, metric='au
 
 
 # TODO
-# - fix random forest and neural network
 # - create dashboard
 # - connect dashboard to models
 # - allow for new data entries
