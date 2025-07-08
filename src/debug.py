@@ -7,6 +7,7 @@ from train_model.train import (
     get_best_model_from_cv,
     compare_all_models,
     create_ensemble,
+    analyze_categorical_cardinality,
 )
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score
@@ -20,6 +21,10 @@ ensemble_model, comparison_results, ensemble_results = create_ensemble(
     X, y, top_models=5
 )
 print(ensemble_results)
+
+# results, model = cross_validate_model(X, y, model_name="Neural Network")
+# print(results)
+# print(model)
 
 
 import matplotlib.pyplot as plt

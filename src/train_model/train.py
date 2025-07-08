@@ -47,7 +47,6 @@ def create_training_data():
         if col.endswith("avg") or col.endswith("won") or col.endswith("beaten")
     ]
     cols_to_include += [
-        "tourney_name",
         "draw_size",
         "tourney_level",
         "best_of",
@@ -84,7 +83,6 @@ def create_training_data():
         "player1_is_seeded",
         "player2_entry",
         "player2_is_seeded",
-        "tourney_name",
         "round",
         "player1_hand",
         "player2_hand",
@@ -94,6 +92,71 @@ def create_training_data():
             X[col] = X[col].astype("category")
     print("Splitted data into features and target variable")
     return X, y
+
+
+def analyze_categorical_cardinality(X):
+    """Check cardinality of categorical features."""
+    categorical_features = [
+        "surface",
+        "best_of",
+        "tourney_level",
+        "player1_entry",
+        "player1_is_seeded",
+        "player2_entry",
+        "player2_is_seeded",
+        "round",
+        "player1_hand",
+        "player2_hand",
+    ]
+
+    print("Categorical Feature Cardinality:")
+    print("-" * 40)
+    for col in categorical_features:
+        if col in X.columns:
+            count = X[col].nunique()
+            print(f"{col:<20}: {count:>4} unique values")
+            if count > 15:
+                print(f"  └── Top 5: {list(X[col].value_counts().head().index)}")
+
+
+def limit_categorical_cardinality(X, max_categories=10, model_name=None):
+    """
+    Limits the number of categories for high-cardinality categorical features.
+    """
+    X_limited = X.copy()
+
+    # Adjust max_categories based on model
+    if model_name == "Neural Network":
+        max_categories = min(max_categories, 8)
+    elif model_name == "Random Forest":
+        max_categories = min(max_categories, 10)
+
+    high_cardinality_cols = ["round"]
+
+    for col in high_cardinality_cols:
+        if col in X_limited.columns:
+            original_count = X_limited[col].nunique()
+            if original_count > max_categories:
+                # If it's categorical, add 'Other' to categories first
+                if X_limited[col].dtype.name == "category":
+                    X_limited[col] = X_limited[col].cat.add_categories(["Other"])
+
+                # Keep only top N categories, make rest 'Other'
+                top_categories = (
+                    X_limited[col].value_counts().head(max_categories).index
+                )
+                X_limited[col] = X_limited[col].where(
+                    X_limited[col].isin(top_categories), "Other"
+                )
+
+                # Remove unused categories
+                if X_limited[col].dtype.name == "category":
+                    X_limited[col] = X_limited[col].cat.remove_unused_categories()
+
+                new_count = X_limited[col].nunique()
+                print(f"Limited {col} from {original_count} to {new_count} categories")
+
+    return X_limited
 
 
 def prepare_data_for_model(X, model_name):
@@ -109,6 +172,11 @@ def prepare_data_for_model(X, model_name):
     """
     X_prepared = X.copy()
 
+    # STEP 1: Limit categorical cardinality first
+    X_prepared = limit_categorical_cardinality(
+        X_prepared, max_categories=15, model_name=model_name
+    )
+
     # Definiere kategorische Features
     categorical_features = [
         "surface",
@@ -118,7 +186,6 @@ def prepare_data_for_model(X, model_name):
         "player1_is_seeded",
         "player2_entry",
         "player2_is_seeded",
-        "tourney_name",
         "round",
         "player1_hand",
         "player2_hand",
@@ -140,6 +207,37 @@ def prepare_data_for_model(X, model_name):
         for col in existing_cat_features:
             X_prepared[col] = X_prepared[col].astype("category")
         return X_prepared, existing_cat_features
+
+    elif model_name == "Random Forest":
+        # For Random Forest: Use label encoding to avoid memory issues
+        from sklearn.preprocessing import LabelEncoder
+
+        label_encoders = {}
+        for col in existing_cat_features:
+            le = LabelEncoder()
+            X_prepared[col] = le.fit_transform(X_prepared[col].astype(str))
+            label_encoders[col] = le
+
+        return X_prepared, []
+
+    elif model_name == "Neural Network":
+        # For Neural Network: One-hot encode but also scale features
+        from sklearn.preprocessing import StandardScaler
+
+        # First, one-hot encode categorical features
+        X_prepared = pd.get_dummies(
+            X_prepared, columns=existing_cat_features, drop_first=True
+        )
+
+        # Then scale all features for neural network
+        scaler = StandardScaler()
+        X_prepared_scaled = pd.DataFrame(
+            scaler.fit_transform(X_prepared),
+            columns=X_prepared.columns,
+            index=X_prepared.index,
+        )
+
+        return X_prepared_scaled, []
 
     else:
         # Für andere Modelle: One-Hot-Encoding
@@ -206,24 +304,27 @@ def get_model_configurations():
         "Random Forest": {
             "model": RandomForestClassifier,
             "params": {
-                "n_estimators": 500,
-                "max_depth": 15,
-                "min_samples_split": 10,
-                "min_samples_leaf": 5,
+                "n_estimators": 100,
+                "max_depth": 10,
+                "min_samples_split": 20,
+                "min_samples_leaf": 10,
                 "max_features": "sqrt",
                 "random_state": 42,
-                "n_jobs": -1,
+                "n_jobs": 4,
             },
         },
         "Neural Network": {
             "model": MLPClassifier,
             "params": {
-                "hidden_layer_sizes": (128, 64, 32),
+                "hidden_layer_sizes": (64, 32),
                 "activation": "relu",
                 "solver": "adam",
-                "alpha": 0.001,
+                "alpha": 0.01,
                 "learning_rate": "adaptive",
-                "max_iter": 1000,
+                "max_iter": 500,
+                "early_stopping": True,
+                "validation_fraction": 0.1,
+                "n_iter_no_change": 20,
                 "random_state": 42,
             },
         },
@@ -578,7 +679,6 @@ def create_ensemble(X, y, top_models=3, n_splits=10, save_model=True):
         "player1_is_seeded",
         "player2_entry",
         "player2_is_seeded",
-        "tourney_name",
         "round",
         "player1_hand",
         "player2_hand",
