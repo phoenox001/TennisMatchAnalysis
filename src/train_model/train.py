@@ -1,5 +1,7 @@
+import json
 import os
 from pathlib import Path
+import time
 from features.features import create_feature_dataframe, get_preprocessed_data
 from sklearn.model_selection import StratifiedKFold, cross_validate
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, log_loss
@@ -20,58 +22,87 @@ root_dir = Path(__file__).resolve().parent.parent.parent
 print(f"Root directory: {root_dir}")
 
 
-def create_training_data():
+def update_training_status(
+    current_fold,
+    total_folds,
+    model_count,
+    total_model_count,
+    loss,
+    auc,
+    status="training",
+):
+    """Update training status in a JSON file"""
+    status_file = Path(__file__).parent.parent / "dashboard" / "training_status.json"
+
+    total_training_iterations = total_folds * total_model_count
+    current_iteration = current_fold + (model_count - 1) * total_folds
+
+    progress_data = {
+        "status": status,
+        "current_fold": current_iteration,
+        "total_folds": total_training_iterations,
+        "progress": (current_iteration / total_training_iterations) * 100,
+        "loss": loss,
+        "auc": auc,
+        "timestamp": time.time(),
+    }
+
+    with open(status_file, "w") as f:
+        json.dump(progress_data, f)
+
+
+def create_training_data(training_data, feature_cols):
     """
     Creates training data for the model.
     Sets type to categorical for categorical features and returns the feature matrix X and target vector y.
     """
 
-    training_data_path = (
-        "/Users/tim/Documents/Projects/TennisMatchAnalysis/data/training_data.parquet"
-    )
-    if os.path.exists(training_data_path):
-        print("Training Data Parquet file exists, reading...")
-        training_data = pd.read_parquet(training_data_path)
-    else:
-        matches, players = get_preprocessed_data(root_dir=root_dir)
-        training_data = create_feature_dataframe(matches, players)
+    # training_data_path = (
+    #     "/Users/tim/Documents/Projects/TennisMatchAnalysis/data/training_data.parquet"
+    # )
+    # if os.path.exists(training_data_path):
+    #     print("Training Data Parquet file exists, reading...")
+    #     training_data = pd.read_parquet(training_data_path)
+    # else:
+    #     matches, players = get_preprocessed_data(root_dir=root_dir)
+    #     training_data = create_feature_dataframe(matches, players)
 
-        training_data.to_parquet(
-            os.path.join(root_dir, "data", "training_data.parquet"),
-            index=False,
-        )
+    #     training_data.to_parquet(
+    #         os.path.join(root_dir, "data", "training_data.parquet"),
+    #         index=False,
+    #     )
 
-    cols_to_include = [
-        col
-        for col in training_data.columns
-        if col.endswith("avg") or col.endswith("won") or col.endswith("beaten")
-    ]
-    cols_to_include += [
-        "draw_size",
-        "tourney_level",
-        "best_of",
-        "round",
-        "player1_seed",
-        "player1_entry",
-        "player1_hand",
-        "player1_ht",
-        "player1_age",
-        "player1_rank",
-        "player1_rank_points",
-        "player1_is_seeded",
-        "player1_years_on_tour",
-        "player2_seed",
-        "player2_entry",
-        "player2_hand",
-        "player2_ht",
-        "player2_age",
-        "player2_rank",
-        "player2_rank_points",
-        "player2_is_seeded",
-        "player2_years_on_tour",
-    ]
+    # cols_to_include = [
+    #     col
+    #     for col in training_data.columns
+    #     if col.endswith("avg") or col.endswith("won") or col.endswith("beaten")
+    # ]
+    # cols_to_include += [
+    #     "draw_size",
+    #     "tourney_level",
+    #     "best_of",
+    #     "round",
+    #     "player1_seed",
+    #     "player1_entry",
+    #     "player1_hand",
+    #     "player1_ht",
+    #     "player1_age",
+    #     "player1_rank",
+    #     "player1_rank_points",
+    #     "player1_is_seeded",
+    #     "player1_years_on_tour",
+    #     "player2_seed",
+    #     "player2_entry",
+    #     "player2_hand",
+    #     "player2_ht",
+    #     "player2_age",
+    #     "player2_rank",
+    #     "player2_rank_points",
+    #     "player2_is_seeded",
+    #     "player2_years_on_tour",
+    # ]
 
-    X = training_data[cols_to_include].copy()
+    X = training_data[feature_cols].copy()
 
     y = training_data["player1_wins"].copy().astype("category")
 
@@ -79,6 +110,7 @@ def create_training_data():
         "surface",
         "best_of",
         "tourney_level",
+        "tourney_name",
         "player1_entry",
         "player1_is_seeded",
         "player2_entry",
@@ -100,6 +132,7 @@ def analyze_categorical_cardinality(X):
         "surface",
         "best_of",
         "tourney_level",
+        "tourney_name",
         "player1_entry",
         "player1_is_seeded",
         "player2_entry",
@@ -131,7 +164,7 @@ def limit_categorical_cardinality(X, max_categories=10, model_name=None):
     elif model_name == "Random Forest":
         max_categories = min(max_categories, 10)
 
-    high_cardinality_cols = ["round"]
+    high_cardinality_cols = ["round", "tourney_name"]
 
     for col in high_cardinality_cols:
         if col in X_limited.columns:
@@ -182,6 +215,7 @@ def prepare_data_for_model(X, model_name):
         "surface",
         "best_of",
         "tourney_level",
+        "tourney_name",
         "player1_entry",
         "player1_is_seeded",
         "player2_entry",
@@ -373,158 +407,193 @@ def cross_validate_model(
     if model_prefix is None:
         model_prefix = f"{model_name.lower().replace(' ', '_')}ModelFold"
 
-    # Daten für spezifisches Modell vorbereiten
-    X_prepared, cat_features = prepare_data_for_model(X, model_name)
-
-    # Klassenverteilung prüfen
-    neg_count = (y == 0).sum()
-    pos_count = (y == 1).sum()
-    if pos_count > 0:
-        scale_pos_weight = neg_count / pos_count
-        # Nur für XGBoost, LightGBM und CatBoost
-        if model_name in ["XGBoost", "LightGBM"]:
-            model_params["scale_pos_weight"] = scale_pos_weight
-        elif model_name == "CatBoost":
-            model_params["scale_pos_weight"] = scale_pos_weight
-        elif model_name == "Random Forest":
-            model_params["class_weight"] = "balanced"
-
-        print(f"Klassenverteilung: {neg_count} negative, {pos_count} positive")
-        print(f"scale_pos_weight: {scale_pos_weight:.3f}")
-
-    # Stratified K-Fold
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     results = []
     models = []
     fold = 1
 
-    print(f"Start cross validation mit {n_splits} Folds für {model_name}")
-    print(f"Verwende optimierte Hyperparameter: {optimize_hyperparams}")
-    print(
-        f"Early Stopping aktiviert: {use_early_stopping and model_name in ['XGBoost', 'LightGBM', 'CatBoost']}"
-    )
-    print(f"Kategorische Features: {cat_features}")
-    print("-" * 60)
+    try:
+        # Daten für spezifisches Modell vorbereiten
+        X_prepared, cat_features = prepare_data_for_model(X, model_name)
 
-    for train_idx, val_idx in skf.split(X_prepared, y):
-        print(f"Training fold {fold}/{n_splits}...")
+        # Klassenverteilung prüfen
+        neg_count = (y == 0).sum()
+        pos_count = (y == 1).sum()
+        if pos_count > 0:
+            scale_pos_weight = neg_count / pos_count
+            # Nur für XGBoost, LightGBM und CatBoost
+            if model_name in ["XGBoost", "LightGBM"]:
+                model_params["scale_pos_weight"] = scale_pos_weight
+            elif model_name == "CatBoost":
+                model_params["scale_pos_weight"] = scale_pos_weight
+            elif model_name == "Random Forest":
+                model_params["class_weight"] = "balanced"
 
-        X_train, X_val = X_prepared.iloc[train_idx], X_prepared.iloc[val_idx]
-        y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+            print(f"Klassenverteilung: {neg_count} negative, {pos_count} positive")
+            print(f"scale_pos_weight: {scale_pos_weight:.3f}")
 
-        # Modell mit individueller random_state für jeden Fold
-        fold_params = model_params.copy()
-        fold_params["random_state"] = 42 + fold
+        # Stratified K-Fold
+        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
-        model = None
+        print(f"Start cross validation mit {n_splits} Folds für {model_name}")
+        print(f"Verwende optimierte Hyperparameter: {optimize_hyperparams}")
+        print(
+            f"Early Stopping aktiviert: {use_early_stopping and model_name in ['XGBoost', 'LightGBM', 'CatBoost']}"
+        )
+        print(f"Kategorische Features: {cat_features}")
+        print("-" * 60)
 
-        # Modell-spezifische Initialisierung
-        if model_name == "CatBoost":
-            # CatBoost mit kategorischen Features
-            fold_params["cat_features"] = cat_features
-            model = model_class(**fold_params)
+        for train_idx, val_idx in skf.split(X_prepared, y):
+            print(f"Training fold {fold}/{n_splits}...")
 
-            if use_early_stopping:
-                model.fit(
-                    X_train,
-                    y_train,
-                    eval_set=[(X_val, y_val)],
-                    early_stopping_rounds=20,
-                    verbose=False,
-                )
+            X_train, X_val = X_prepared.iloc[train_idx], X_prepared.iloc[val_idx]
+            y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+            # Modell mit individueller random_state für jeden Fold
+            fold_params = model_params.copy()
+            fold_params["random_state"] = 42 + fold
+
+            model = None
+
+            # Modell-spezifische Initialisierung
+            if model_name == "CatBoost":
+                # CatBoost mit kategorischen Features
+                fold_params["cat_features"] = cat_features
+                model = model_class(**fold_params)
+
+                if use_early_stopping:
+                    model.fit(
+                        X_train,
+                        y_train,
+                        eval_set=[(X_val, y_val)],
+                        early_stopping_rounds=20,
+                        verbose=False,
+                    )
+                else:
+                    model.fit(X_train, y_train)
+
+            elif use_early_stopping and model_name in ["XGBoost", "LightGBM"]:
+                if model_name == "XGBoost":
+                    fold_params["early_stopping_rounds"] = 20
+                    model = model_class(**fold_params)
+                    model.fit(
+                        X_train, y_train, eval_set=[(X_val, y_val)], verbose=False
+                    )
+                elif model_name == "LightGBM":
+                    model = model_class(**fold_params)
+                    model.fit(
+                        X_train,
+                        y_train,
+                        eval_set=[(X_val, y_val)],
+                        callbacks=[lgb.early_stopping(20, verbose=False)],
+                    )
             else:
+                model = model_class(**fold_params)
                 model.fit(X_train, y_train)
 
-        elif use_early_stopping and model_name in ["XGBoost", "LightGBM"]:
-            if model_name == "XGBoost":
-                fold_params["early_stopping_rounds"] = 20
-                model = model_class(**fold_params)
-                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
-            elif model_name == "LightGBM":
-                model = model_class(**fold_params)
-                model.fit(
-                    X_train,
-                    y_train,
-                    eval_set=[(X_val, y_val)],
-                    callbacks=[lgb.early_stopping(20, verbose=False)],
+            # Vorhersagen
+            if model is not None:
+                y_pred = model.predict(X_val)
+                y_proba = model.predict_proba(X_val)[:, 1]
+            else:
+                print(
+                    f"Warning: Model is None in fold {fold}, skipping predictions for this fold."
                 )
-        else:
-            model = model_class(**fold_params)
-            model.fit(X_train, y_train)
+                fold += 1
+                continue
 
-        # Vorhersagen
-        if model is not None:
-            y_pred = model.predict(X_val)
-            y_proba = model.predict_proba(X_val)[:, 1]
-        else:
-            print(
-                f"Warning: Model is None in fold {fold}, skipping predictions for this fold."
+            # Metriken berechnen
+            acc = accuracy_score(y_val, y_pred)
+            auc = roc_auc_score(y_val, y_proba)
+            f1 = f1_score(y_val, y_pred)
+            logloss = log_loss(y_val, y_proba)
+            update_training_status(
+                fold, n_splits, 1, 1, log_loss, auc, status="training"
             )
+
+            # Anzahl der verwendeten Estimators
+            n_estimators_used = model_params.get(
+                "n_estimators", model_params.get("iterations", "N/A")
+            )
+            if use_early_stopping and model_name in ["XGBoost", "LightGBM", "CatBoost"]:
+                if model is not None and hasattr(model, "best_iteration"):
+                    n_estimators_used = model.best_iteration
+                elif model is not None and hasattr(model, "best_iteration_"):
+                    n_estimators_used = model.best_iteration_
+
+            results.append(
+                {
+                    "fold": fold,
+                    "accuracy": acc,
+                    "auc": auc,
+                    "f1": f1,
+                    "logloss": logloss,
+                    "n_estimators_used": n_estimators_used,
+                }
+            )
+
+            models.append(model)
+
+            # Modell speichern falls gewünscht
+            if save_models:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                os.makedirs(f"{root_dir}/models", exist_ok=True)
+                filename = f"{root_dir}/models/{model_prefix}_{fold}_{timestamp}.pkl"
+                joblib.dump(model, filename)
+                print(f"Saved model to {filename}")
+
+            print(
+                f"Fold {fold} - Accuracy: {acc:.4f} | AUC: {auc:.4f} | F1: {f1:.4f} | LogLoss: {logloss:.4f}"
+            )
+
+            if use_early_stopping and hasattr(model, "best_iteration"):
+                print(f"Best iteration: {model.best_iteration}")
+
+            print("-" * 40)
             fold += 1
-            continue
-
-        # Metriken berechnen
-        acc = accuracy_score(y_val, y_pred)
-        auc = roc_auc_score(y_val, y_proba)
-        f1 = f1_score(y_val, y_pred)
-        logloss = log_loss(y_val, y_proba)
-
-        # Anzahl der verwendeten Estimators
-        n_estimators_used = model_params.get(
-            "n_estimators", model_params.get("iterations", "N/A")
+    except Exception as e:
+        print(f"✗ {model_name} fehlgeschlagen: {str(e)}")
+        update_training_status(
+            1,
+            1,
+            1,
+            1,
+            None,
+            None,
+            status=f"training failed for {model_name}",
         )
-        if use_early_stopping and model_name in ["XGBoost", "LightGBM", "CatBoost"]:
-            if model is not None and hasattr(model, "best_iteration"):
-                n_estimators_used = model.best_iteration
-            elif model is not None and hasattr(model, "best_iteration_"):
-                n_estimators_used = model.best_iteration_
-
-        results.append(
-            {
-                "fold": fold,
-                "accuracy": acc,
-                "auc": auc,
-                "f1": f1,
-                "logloss": logloss,
-                "n_estimators_used": n_estimators_used,
-            }
-        )
-
-        models.append(model)
-
-        # Modell speichern falls gewünscht
-        if save_models:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            os.makedirs(f"{root_dir}/models", exist_ok=True)
-            filename = f"{root_dir}/models/{model_prefix}_{fold}_{timestamp}.pkl"
-            joblib.dump(model, filename)
-            print(f"Saved model to {filename}")
-
-        print(
-            f"Fold {fold} - Accuracy: {acc:.4f} | AUC: {auc:.4f} | F1: {f1:.4f} | LogLoss: {logloss:.4f}"
-        )
-
-        if use_early_stopping and hasattr(model, "best_iteration"):
-            print(f"Best iteration: {model.best_iteration}")
-
-        print("-" * 40)
-        fold += 1
 
     # Zusammenfassung der Ergebnisse
     results_df = pd.DataFrame(results)
-    print(f"\n{model_name} Cross-Validation Ergebnisse:")
-    print(
-        f"Accuracy: {results_df['accuracy'].mean():.4f} ± {results_df['accuracy'].std():.4f}"
-    )
-    print(f"AUC: {results_df['auc'].mean():.4f} ± {results_df['auc'].std():.4f}")
-    print(f"F1: {results_df['f1'].mean():.4f} ± {results_df['f1'].std():.4f}")
-    print(
-        f"LogLoss: {results_df['logloss'].mean():.4f} ± {results_df['logloss'].std():.4f}"
-    )
 
-    if use_early_stopping and model_name in ["XGBoost", "LightGBM", "CatBoost"]:
-        avg_estimators = results_df["n_estimators_used"].mean()
-        print(f"Durchschnittliche Anzahl Bäume: {avg_estimators:.1f}")
+    try:
+        print(f"\n{model_name} Cross-Validation Ergebnisse:")
+        print(
+            f"Accuracy: {results_df['accuracy'].mean():.4f} ± {results_df['accuracy'].std():.4f}"
+        )
+        print(f"AUC: {results_df['auc'].mean():.4f} ± {results_df['auc'].std():.4f}")
+        print(f"F1: {results_df['f1'].mean():.4f} ± {results_df['f1'].std():.4f}")
+        print(
+            f"LogLoss: {results_df['logloss'].mean():.4f} ± {results_df['logloss'].std():.4f}"
+        )
+
+        if use_early_stopping and model_name in ["XGBoost", "LightGBM", "CatBoost"]:
+            avg_estimators = results_df["n_estimators_used"].mean()
+            print(f"Durchschnittliche Anzahl Bäume: {avg_estimators:.1f}")
+
+        update_training_status(
+            fold,
+            n_splits,
+            1,
+            1,
+            results_df["logloss"].mean(),
+            results_df["auc"].mean,
+            status="Finished Training",
+        )
+    except Exception as e:
+        update_training_status(
+            fold, n_splits, 1, 1, None, None, status="training failed"
+        )
+        return results, None
 
     return results_df, models
 
@@ -552,8 +621,20 @@ def compare_all_models(X, y, n_splits=5, save_results=True):
     print("Vergleiche alle Modelle...")
     print("=" * 80)
 
+    model_count = 1
+
     for model_name, config in models_config.items():
         print(f"Trainiere {model_name}...")
+
+        update_training_status(
+            0,
+            n_splits,
+            model_count,
+            len(models_config.items()),
+            None,
+            None,
+            status="training",
+        )
 
         try:
             # Daten für spezifisches Modell vorbereiten
@@ -604,9 +685,29 @@ def compare_all_models(X, y, n_splits=5, save_results=True):
             }
 
             print(f"✓ {model_name} abgeschlossen")
+            update_training_status(
+                0,
+                n_splits,
+                model_count,
+                len(models_config.items()),
+                results[model_name]["logloss"],
+                results[model_name]["auc"],
+                status="training",
+            )
+            model_count += 1
 
         except Exception as e:
             print(f"✗ {model_name} fehlgeschlagen: {str(e)}")
+            update_training_status(
+                1,
+                1,
+                model_count,
+                len(models_config.items()),
+                None,
+                None,
+                status=f"training failed for {model_name}",
+            )
+            model_count += 1
             continue
 
     # Ergebnisse als DataFrame
@@ -639,6 +740,16 @@ def compare_all_models(X, y, n_splits=5, save_results=True):
             f"\nErgebnisse gespeichert: {root_dir}/results/model_comparison_{timestamp}.csv"
         )
 
+    update_training_status(
+        n_splits,
+        n_splits,
+        len(models_config.items()),
+        len(models_config.items()),
+        None,
+        None,
+        status="Finished training",
+    )
+
     return results_df
 
 
@@ -660,6 +771,10 @@ def create_ensemble(X, y, top_models=3, n_splits=10, save_model=True):
     # Erst alle Modelle vergleichen
     print("Vergleiche Modelle für Ensemble-Auswahl...")
     comparison_results = compare_all_models(X, y, n_splits=n_splits, save_results=False)
+
+    update_training_status(
+        0, n_splits, 1, 1, None, None, status="Creating Ensemble model"
+    )
 
     # Top Modelle auswählen
     top_model_names = comparison_results.head(top_models).index.tolist()
@@ -724,6 +839,10 @@ def create_ensemble(X, y, top_models=3, n_splits=10, save_model=True):
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     scoring = ["accuracy", "roc_auc", "f1", "neg_log_loss"]
 
+    update_training_status(
+        1, n_splits, 1, 1, None, None, status="Cross validating ensemble"
+    )
+
     ensemble_cv_results = cross_validate(
         ensemble, X_ensemble, y, cv=cv, scoring=scoring, return_train_score=False
     )
@@ -747,6 +866,15 @@ def create_ensemble(X, y, top_models=3, n_splits=10, save_model=True):
     print(f"F1: {ensemble_results['f1']:.4f} ± {ensemble_results['f1_std']:.4f}")
     print(
         f"LogLoss: {ensemble_results['logloss']:.4f} ± {ensemble_results['logloss_std']:.4f}"
+    )
+    update_training_status(
+        n_splits,
+        n_splits,
+        1,
+        1,
+        ensemble_results["logloss"],
+        ensemble_results["auc"],
+        status="Finished creating ensemble",
     )
 
     # Ensemble trainieren auf allen Daten
@@ -778,6 +906,16 @@ def get_best_model_from_cv(results_df, models, metric="auc"):
     best_fold_idx = results_df[metric].idxmax()
     best_model = models[best_fold_idx]
     best_results = results_df.iloc[best_fold_idx]
+
+    update_training_status(
+        1,
+        1,
+        1,
+        1,
+        best_results["logloss"],
+        best_results["auc"],
+        status="getting best model",
+    )
 
     print(f"Bestes Modell (Fold {best_results['fold']}) basierend auf {metric}:")
     print(f"Accuracy: {best_results['accuracy']:.4f}")
