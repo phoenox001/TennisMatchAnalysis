@@ -23,6 +23,20 @@ from features.features import create_feature_dataframe, get_preprocessed_data
 st.set_page_config(page_title="Models", page_icon="🤖")
 
 
+def initialize_session_state():
+    """Initialize session state variables"""
+    if "model_trained" not in st.session_state:
+        st.session_state.model_trained = False
+    if "results" not in st.session_state:
+        st.session_state.results = False
+    if "comparison_results" not in st.session_state:
+        st.session_state.comparison_results = False
+    if "training_history" not in st.session_state:
+        st.session_state.training_history = []
+    if "training_data" not in st.session_state:
+        st.session_state.training_data = pd.DataFrame()
+
+
 @st.cache_data
 def load_training_data():
     root_dir = Path(__file__).resolve().parent.parent.parent
@@ -42,7 +56,7 @@ def load_training_data():
             os.path.join(root_dir, "data", "training_data.parquet"),
             index=False,
         )
-    return training_data
+    st.session_state.training_data = training_data
 
 
 def load_training_status():
@@ -72,12 +86,19 @@ def run_training(X, y):
             X, y, model_name=selected_model, save_models=True, n_splits=n_folds
         )
         result, model = get_best_model_from_cv(results, models)
+        st.session_state.model_trained = model
+        st.session_state.results = result
+
     elif selected_model == "Ensemble Model (combined model)":
         result, comparison_results, model = create_ensemble(
             X, y, top_models=top_model_count, n_splits=n_folds, save_model=save_model
         )
+        st.session_state.model_trained = model
+        st.session_state.results = result
+        st.session_state.comparison_results = comparison_results
     else:
         result = compare_all_models(X, y, n_splits=n_folds, save_results=save_model)
+        st.session_state.comparison_results = result
 
 
 training_data = load_training_data()
@@ -100,6 +121,7 @@ models = [
     "Compare Models",
     "Ensemble Model (combined model)",
 ]
+
 if training_data is not None:
     loaded = True
 else:
@@ -109,7 +131,9 @@ else:
 st.checkbox("Data Loaded", loaded)
 
 selected_model = st.selectbox("Choose your model", models)
-selected_features = st.multiselect("Choose your features", training_data.columns)
+selected_features = st.multiselect(
+    "Choose your features", st.session_state.training_data.columns
+)
 
 col1, col2, col3 = st.columns(3)
 with col1:
