@@ -1,6 +1,7 @@
 # File: src/features/features.py
 
 import os
+from pathlib import Path
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -38,9 +39,13 @@ def get_preprocessed_data(root_dir):
     )
     ranked_players = player_rankings.preprocess_player_data(ranked_players)
     atp_matches_data = atp_matches.preprocess_atp_matches_data(atp_matches_data)
-    # ranked_players = player_rankings.calculate_missing_dob(
-    #     ranked_players, atp_matches_data
-    # )
+
+    # save atp_ranking for later access in dashboard
+    atp_ranking = player_rankings.get_latest_atp_ranking(ranked_players)
+    atp_ranking.to_parquet(
+        os.path.join(root_dir, "data", "training_data.parquet"),
+        index=False,
+    )
 
     print("finished reading and preprocessing ATP matches and player rankings data.")
     return atp_matches_data, ranked_players
@@ -663,7 +668,9 @@ def prepare_matches_data(matches):
     return matches
 
 
-def create_feature_dataframe(matches, players):
+def create_feature_dataframe(
+    matches, players, root_dir=Path(__file__).resolve().parent.parent
+):
     #
     # Combines all features into a single DataFrame for analysis. And removes some columns that are not needed for the analysis.
 
@@ -675,9 +682,7 @@ def create_feature_dataframe(matches, players):
     #
 
     print("Creating feature DataFrame from matches and players data...")
-    player_features_path = (
-        "/Users/tim/Documents/Projects/TennisMatchAnalysis/data/player_features.parquet"
-    )
+    player_features_path = root_dir / "data" / "player_features.parquet"
     matches = merge_all_player_info(matches, players)
 
     if os.path.exists(player_features_path):

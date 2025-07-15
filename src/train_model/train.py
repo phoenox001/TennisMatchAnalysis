@@ -57,51 +57,6 @@ def create_training_data(training_data, feature_cols):
     Sets type to categorical for categorical features and returns the feature matrix X and target vector y.
     """
 
-    # training_data_path = (
-    #     "/Users/tim/Documents/Projects/TennisMatchAnalysis/data/training_data.parquet"
-    # )
-    # if os.path.exists(training_data_path):
-    #     print("Training Data Parquet file exists, reading...")
-    #     training_data = pd.read_parquet(training_data_path)
-    # else:
-    #     matches, players = get_preprocessed_data(root_dir=root_dir)
-    #     training_data = create_feature_dataframe(matches, players)
-
-    #     training_data.to_parquet(
-    #         os.path.join(root_dir, "data", "training_data.parquet"),
-    #         index=False,
-    #     )
-
-    # cols_to_include = [
-    #     col
-    #     for col in training_data.columns
-    #     if col.endswith("avg") or col.endswith("won") or col.endswith("beaten")
-    # ]
-    # cols_to_include += [
-    #     "draw_size",
-    #     "tourney_level",
-    #     "best_of",
-    #     "round",
-    #     "player1_seed",
-    #     "player1_entry",
-    #     "player1_hand",
-    #     "player1_ht",
-    #     "player1_age",
-    #     "player1_rank",
-    #     "player1_rank_points",
-    #     "player1_is_seeded",
-    #     "player1_years_on_tour",
-    #     "player2_seed",
-    #     "player2_entry",
-    #     "player2_hand",
-    #     "player2_ht",
-    #     "player2_age",
-    #     "player2_rank",
-    #     "player2_rank_points",
-    #     "player2_is_seeded",
-    #     "player2_years_on_tour",
-    # ]
-
     X = training_data[feature_cols].copy()
 
     y = training_data["player1_wins"].copy().astype("category")

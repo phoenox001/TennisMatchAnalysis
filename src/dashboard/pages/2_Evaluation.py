@@ -31,14 +31,14 @@ def main():
         return
 
     # Get model data
-    models, results_df, is_multiple = get_model_data()
+    models, results_df, comparison_results = get_model_data()
 
     # Display overview
-    display_overview(results_df, is_multiple)
+    display_overview(results_df, comparison_results)
 
     # Main evaluation content
-    if is_multiple:
-        display_multiple_models_evaluation(models, results_df)
+    if comparison_results is not None:
+        display_multiple_models_evaluation(models, results_df, comparison_results)
     else:
         display_single_model_evaluation(models, results_df)
 
@@ -57,24 +57,26 @@ def get_model_data():
     """Get model data from session state"""
     models = st.session_state.trained_model
     results = st.session_state.results
-    comparison_results = st.session_state.comparison_results
+    if hasattr(st.session_state, "comparison_results"):
+        comparison_results = st.session_state.comparison_results
 
-    return models, results, comparison_results
+        return models, results, comparison_results
+    return models, results, False
 
 
-def display_overview(results_df, is_multiple):
+def display_overview(results_df, comparison_results):
     """Display overview metrics"""
     st.header("📈 Performance Overview")
 
     # Key metrics cards
     col1, col2, col3, col4 = st.columns(4)
 
-    if is_multiple:
-        best_model_idx = results_df["accuracy"].idxmax()
-        best_accuracy = results_df.loc[best_model_idx, "accuracy"]
-        best_auc = results_df.loc[best_model_idx, "auc"]
-        best_f1 = results_df.loc[best_model_idx, "f1"]
-        avg_logloss = results_df["logloss"].mean()
+    if comparison_results is not None:
+        best_model_idx = comparison_results["auc"].idxmax()
+        best_accuracy = comparison_results.loc[best_model_idx, "accuracy"]
+        best_auc = comparison_results.loc[best_model_idx, "auc"]
+        best_f1 = comparison_results.loc[best_model_idx, "f1"]
+        avg_logloss = comparison_results["logloss"].mean()
 
         with col1:
             st.metric("Best Accuracy", f"{best_accuracy:.3f}")
@@ -95,50 +97,55 @@ def display_overview(results_df, is_multiple):
             st.metric("Log Loss", f"{results_df['logloss'].iloc[0]:.3f}")
 
 
-def display_multiple_models_evaluation(models, results_df):
+def display_multiple_models_evaluation(models, results_df, comparison_results=None):
     """Display evaluation for multiple models"""
+
     st.header("🔍 Multiple Models Comparison")
+    if comparison_results is not None:
 
-    # Model selection
-    col1, col2 = st.columns([1, 3])
+        # Model selection
+        col1, col2 = st.columns([1, 3])
 
-    with col1:
-        st.subheader("Model Selection")
-        model_names = [f"Model {i+1}" for i in range(len(models))]
-        selected_model_idx = st.selectbox(
-            "Select model for detailed analysis:",
-            range(len(models)),
-            format_func=lambda x: model_names[x],
-        )
+        with col1:
+            st.subheader("Model Selection")
+            model_names = [f"Model {i+1}" for i in range(len(models))]
+            selected_model_idx = st.selectbox(
+                "Select model for detailed analysis:",
+                range(len(models)),
+                format_func=lambda x: model_names[x],
+            )
 
-    with col2:
-        st.subheader("Models Comparison")
+        with col2:
+            st.subheader("Models Comparison")
 
-        # Performance comparison chart
-        fig = create_comparison_chart(results_df)
-        st.plotly_chart(fig, use_container_width=True)
+            # Performance comparison chart
+            fig = create_comparison_chart(comparison_results)
+            st.plotly_chart(fig, use_container_width=True)
 
-    # Detailed analysis for selected model
-    st.markdown("---")
-    st.header(f"📊 Detailed Analysis - {model_names[selected_model_idx]}")
+        # Detailed analysis for selected model
+        st.markdown("---")
+        st.header(f"📊 Detailed Analysis - {model_names[selected_model_idx]}")
 
-    selected_model = models[selected_model_idx]
-    selected_results = results_df.iloc[selected_model_idx : selected_model_idx + 1]
+        selected_model = models[selected_model_idx]
+        selected_results = comparison_results.iloc[
+            selected_model_idx : selected_model_idx + 1
+        ]
 
-    display_detailed_analysis(selected_model, selected_results)
+        display_detailed_analysis(selected_model, selected_results)
 
-    # Models summary table
-    st.markdown("---")
-    st.header("📋 Models Summary")
+        # Models summary table
+        st.markdown("---")
+        st.header("📋 Models Summary")
 
-    # Format results for display
-    display_results = results_df.copy()
-    display_results.index = model_names
-    display_results = display_results.round(4)
+        # Format results for display
+        display_results = comparison_results.copy()
+        display_results.index = model_names
+        display_results = display_results.round(4)
 
-    # Highlight best performing model
-    styled_df = display_results.style.highlight_max(axis=0, color="lightgreen")
-    st.dataframe(styled_df, use_container_width=True)
+        # Highlight best performing model
+        styled_df = display_results.style.highlight_max(axis=0, color="lightgreen")
+        st.dataframe(styled_df, use_container_width=True)
+    display_single_model_evaluation(models, results_df)
 
 
 def display_single_model_evaluation(model, results_df):
@@ -150,6 +157,9 @@ def display_single_model_evaluation(model, results_df):
 
 def display_detailed_analysis(model, results_df):
     """Display detailed analysis for a single model"""
+    if model is None:
+        st.warning("no model is loaded, only results dataframe is available")
+        return
 
     # Performance metrics visualization
     col1, col2 = st.columns(2)
@@ -341,44 +351,56 @@ def create_feature_importance_chart(importances, feature_names):
 
 def create_roc_curve(model, X_test, y_test):
     """Create ROC curve (requires test data)"""
-    y_pred_proba = model.predict_proba(X_test)[:, 1]
-    fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+    try:
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name="ROC Curve"))
-    fig.add_trace(
-        go.Scatter(
-            x=[0, 1], y=[0, 1], mode="lines", name="Random", line=dict(dash="dash")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name="ROC Curve"))
+        fig.add_trace(
+            go.Scatter(
+                x=[0, 1], y=[0, 1], mode="lines", name="Random", line=dict(dash="dash")
+            )
         )
-    )
 
-    fig.update_layout(
-        title="ROC Curve",
-        xaxis_title="False Positive Rate",
-        yaxis_title="True Positive Rate",
-        height=400,
-    )
+        fig.update_layout(
+            title="ROC Curve",
+            xaxis_title="False Positive Rate",
+            yaxis_title="True Positive Rate",
+            height=400,
+        )
 
-    return fig
+        return fig
+    except Exception as e:
+        st.warning("Cannot create ROC curve")
 
 
 def create_pr_curve(model, X_test, y_test):
     """Create Precision-Recall curve (requires test data)"""
-    y_pred_proba = model.predict_proba(X_test)[:, 1]
-    precision, recall, _ = precision_recall_curve(y_test, y_pred_proba)
+    try:
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        precision, recall, _ = precision_recall_curve(y_test, y_pred_proba)
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=recall, y=precision, mode="lines", name="PR Curve"))
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=recall, y=precision, mode="lines", name="PR Curve"))
 
-    fig.update_layout(
-        title="Precision-Recall Curve",
-        xaxis_title="Recall",
-        yaxis_title="Precision",
-        height=400,
-    )
-
-    return fig
+        fig.update_layout(
+            title="Precision-Recall Curve",
+            xaxis_title="Recall",
+            yaxis_title="Precision",
+            height=400,
+        )
+        return fig
+    except Exception as e:
+        st.warning("Cannot create PR Curve")
 
 
 if __name__ == "__main__":
     main()
+
+
+"""
+TODO
+- check if presentation works for all trained model cases
+- fix ensemble model presentation
+"""

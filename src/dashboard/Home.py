@@ -1,3 +1,5 @@
+from pathlib import Path
+import sys
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,6 +11,9 @@ import pickle
 import json
 from datetime import datetime
 import warnings
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from features.features import create_feature_dataframe, get_preprocessed_data
 
 warnings.filterwarnings("ignore")
 
@@ -80,9 +85,50 @@ st.markdown(
 )
 
 
+def initialize_session_state():
+    # Initialize session state
+    if "model_trained" not in st.session_state:
+        st.session_state.model_trained = None
+    if "results" not in st.session_state:
+        st.session_state.results = None
+    if "comparison_results" not in st.session_state:
+        st.session_state.comparison_results = None
+    if "training_history" not in st.session_state:
+        st.session_state.training_history = None
+    if "training_data" not in st.session_state:
+        st.session_state.training_data = None
+    if "atp_ranking" not in st.session_state:
+        st.session_state.atp_ranking = None
+
+
+@st.cache_data
+def load_data():
+    # load training data to session state
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    print(f"Root directory: {root_dir}")
+
+    training_data_path = root_dir / "data" / "training_data.parquet"
+    if os.path.exists(training_data_path):
+        print("Training Data Parquet file exists, reading...")
+        training_data = pd.read_parquet(training_data_path)
+    else:
+        matches, players = get_preprocessed_data(root_dir=root_dir)
+        training_data = create_feature_dataframe(matches, players, root_dir)
+
+        training_data.to_parquet(
+            os.path.join(root_dir, "data", "training_data.parquet"),
+            index=False,
+        )
+    st.session_state.training_data = training_data
+
+    # load atp_ranking into session state
+    return training_data
+
+
 def load_best_model():
     """Load the best model based on AUC score from the models folder"""
-    models_folder = "models"
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    models_folder = root_dir / "models"
 
     if not os.path.exists(models_folder):
         return None, None, None
@@ -137,6 +183,8 @@ def create_sample_performance_data():
 
 def main():
     # Hero Section
+    training_data = load_data()
+
     st.markdown(
         """
     <div class="main-header">

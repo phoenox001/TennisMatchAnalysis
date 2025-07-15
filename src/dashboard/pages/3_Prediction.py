@@ -152,13 +152,13 @@ def get_player_input():
     with col1:
         st.write("**Player 1**")
         p1_first_name = st.text_input(
-            "First Name", key="p1_first", placeholder="e.g., Roger"
+            "First Name", key="p1_first", placeholder="e.g., Jannik"
         )
         p1_last_name = st.text_input(
-            "Last Name", key="p1_last", placeholder="e.g., Federer"
+            "Last Name", key="p1_last", placeholder="e.g., Sinner"
         )
         p1_rank = st.number_input(
-            "Current Rank", min_value=1, max_value=1000, value=1, key="p1_rank"
+            "Current Rank", min_value=1, max_value=5000, value=1, key="p1_rank"
         )
 
         player1_data = (
@@ -175,10 +175,10 @@ def get_player_input():
     with col2:
         st.write("**Player 2**")
         p2_first_name = st.text_input(
-            "First Name", key="p2_first", placeholder="e.g., Rafael"
+            "First Name", key="p2_first", placeholder="e.g., Carlos"
         )
         p2_last_name = st.text_input(
-            "Last Name", key="p2_last", placeholder="e.g., Nadal"
+            "Last Name", key="p2_last", placeholder="e.g., Alcaraz"
         )
         p2_rank = st.number_input(
             "Current Rank", min_value=1, max_value=1000, value=2, key="p2_rank"
@@ -404,24 +404,43 @@ def load_training_data():
         return st.session_state.training_data
 
     # If not available, return None
-    # You can implement file loading here if needed
     return None
 
 
-def get_latest_player_data(player_name, training_data):
+def load_atp_ranking():
+    if hasattr(st.session_state, "atp_ranking"):
+        return st.session_state.atp_ranking
+
+    # If not available, return None
+    return None
+
+
+def get_latest_player_data(player_name_first, player_name_last, training_data):
     """Get the latest data for a specific player from training data"""
     if training_data is None:
+        st.warning("training data is not loaded")
         return None
 
     # Filter data for the specific player
-    # This assumes your training data has player names in some format
-    # Adjust the filtering logic based on your data structure
     try:
-        # Example filtering - adjust based on your data structure
-        player_data = training_data[
-            (training_data["player1_name"] == player_name)
-            | (training_data["player2_name"] == player_name)
-        ]
+        # get player_id through latest atp ranking table
+        atp_ranking = load_atp_ranking()
+        if atp_ranking is not None:
+            player = atp_ranking[
+                atp_ranking["name_first"]
+                == player_name_first & atp_ranking["name_last"]
+                == player_name_last
+            ]
+            player_id = player[["player_id"]]
+        else:
+            st.warning("atp rankings data is not loaded")
+            return None
+
+        # use player_id to get latest info from training data
+        training_data = training_data.sort_values(["tourney_date", "match_num"])
+        player_data = training_data[training_data["player1_id"] == player_id]
+
+        # adjust data to fit the newest data available
 
         if not player_data.empty:
             # Return the most recent entry
@@ -648,3 +667,12 @@ if __name__ == "__main__":
     # Display prediction history at the bottom
     st.markdown("---")
     display_prediction_history()
+
+
+
+"""
+TODO
+- fix getting features for prediction
+- fix getting data for match prediction
+- making predictions
+"""

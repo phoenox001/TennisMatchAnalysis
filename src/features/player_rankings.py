@@ -33,6 +33,14 @@ def read_atp_players(file_path):
     )
 
 
+def get_latest_atp_ranking(atp_players):
+    atp_players = atp_players.sort_values(
+        by=["ranking_date", "rank"], ascending=[False, True]
+    )
+    latest_rankings = atp_players.drop_duplicates(subset=["player_id"], keep="first")
+    return latest_rankings
+
+
 def read_all_atp_rankings(directory, file_pattern="atp_rankings_*.csv"):
     #
     # Reads all ATP rankings files from a directory and concatenates them into a single DataFrame.
