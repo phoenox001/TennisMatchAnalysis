@@ -53,10 +53,7 @@ def run_training(X, y):
             training_data=training_data, feature_cols=selected_features
         )
         model = False
-        if (
-            selected_model != "Ensemble Model (combined model)"
-            and selected_model != "Compare Models"
-        ):
+        if selected_model != "Ensemble Model (combined model)":
             results, models = cross_validate_model(
                 X, y, model_name=selected_model, save_models=True, n_splits=n_folds
             )
@@ -64,7 +61,7 @@ def run_training(X, y):
             st.session_state.model_trained = model
             st.session_state.results = result
 
-        elif selected_model == "Ensemble Model (combined model)":
+        else:
             result, comparison_results, model = create_ensemble(
                 X,
                 y,
@@ -75,9 +72,6 @@ def run_training(X, y):
             st.session_state.model_trained = model
             st.session_state.results = result
             st.session_state.comparison_results = comparison_results
-        else:
-            result = compare_all_models(X, y, n_splits=n_folds, save_results=save_model)
-            st.session_state.comparison_results = result
     else:
         st.warning("Error: no training data loaded")
         return
@@ -103,7 +97,6 @@ models = [
     "CatBoost",
     "Random Forest",
     "Neural Network",
-    "Compare Models",
     "Ensemble Model (combined model)",
 ]
 
@@ -119,6 +112,7 @@ if st.checkbox("Data Loaded", loaded):
     selected_features = st.multiselect(
         "Choose your features", st.session_state.training_data.columns
     )
+    st.session_state.selected_features = selected_features
 
     col1, col2, col3 = st.columns(3)
     with col1:

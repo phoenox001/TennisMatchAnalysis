@@ -6,6 +6,11 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 
+from sklearn.ensemble import VotingClassifier
+import xgboost as xgb
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
 
 def main():
     st.set_page_config(page_title="Match Prediction", page_icon="🎾", layout="wide")
@@ -28,12 +33,12 @@ def main():
     st.header("🔮 Match Prediction")
 
     # Player input section
-    player1_data, player2_data = get_player_input()
+    player1_data, player2_data, match_data = get_player_input()
 
-    if player1_data and player2_data:
+    if player1_data and player2_data and match_data:
         # Feature completion section
         feature_data = complete_features(
-            player1_data, player2_data, model_info["features"]
+            player1_data, player2_data, match_data, model_info["features"]
         )
 
         # Prediction section
@@ -47,38 +52,153 @@ def check_model_availability():
         hasattr(st.session_state, "model_trained")
         and st.session_state.model_trained
         and (
-            hasattr(st.session_state, "trained_model")
-            or hasattr(st.session_state, "model_list")
+            (hasattr(st.session_state, "results_df"))
+            or (hasattr(st.session_state, "comparison_results"))
         )
     )
 
 
-def get_model_info():
-    """Get information about the trained model"""
-    is_multiple = getattr(st.session_state, "is_multiple_models", False)
+def get_model_info(model=None, feature_names=None):
+    """
+    Extract model information including name, number of features, and feature names.
 
-    if is_multiple:
-        models = st.session_state.model_list
+    Args:
+        model: Trained sklearn/xgboost/lightgbm/catboost model
+        feature_names: List of feature names used during training (optional for some models)
+
+    Returns:
+        dict: Dictionary containing model_name, num_features, and feature_names
+    """
+    if model is None:
+        model = st.session_state.model_trained
         results_df = st.session_state.results_df
-        algorithms = getattr(
-            st.session_state,
-            "algorithms_used",
-            [f"Model {i+1}" for i in range(len(models))],
-        )
-    else:
-        models = [st.session_state.trained_model]
-        results_df = st.session_state.results_df
-        algorithms = [getattr(st.session_state, "algorithm_used", "Trained Model")]
+        if hasattr(st.session_state, "comparison_results"):
+            comparison_results = st.session_state.comparison_results
 
-    feature_names = getattr(st.session_state, "feature_names", [])
-
-    return {
-        "models": models,
-        "results_df": results_df,
-        "algorithms": algorithms,
-        "features": feature_names,
-        "is_multiple": is_multiple,
+    info = {
+        "model": model,
+        "model_name": "",
+        "model_type": "",
+        "num_features": 0,
+        "feature_names": [],
     }
+
+    # Get model name and type
+    model_class = model.__class__.__name__
+    model_module = model.__class__.__module__
+
+    info["model_name"] = model_class
+    info["model_type"] = f"{model_module}.{model_class}"
+
+    # Handle different model types
+    if hasattr(model, "n_features_in_"):
+        # Most sklearn models have this attribute after fitting
+        info["num_features"] = model.n_features_in_
+
+        # Try to get feature names
+        if hasattr(model, "feature_names_in_") and model.feature_names_in_ is not None:
+            info["feature_names"] = list(model.feature_names_in_)
+        else:
+            info["feature_names"] = st.session_state.selected_features
+
+    # Special handling for specific models
+    elif isinstance(model, xgb.XGBClassifier):
+        if hasattr(model, "n_features_in_"):
+            info["num_features"] = model.n_features_in_
+        else:
+            # Fallback: try to get from booster
+            try:
+                booster = model.get_booster()
+                feature_names_booster = booster.feature_names
+                if feature_names_booster:
+                    info["num_features"] = len(feature_names_booster)
+                    info["feature_names"] = feature_names_booster
+            except:
+                pass
+
+        # Get feature names
+        if not info["feature_names"]:
+            if (
+                hasattr(model, "feature_names_in_")
+                and model.feature_names_in_ is not None
+            ):
+                info["feature_names"] = list(model.feature_names_in_)
+            elif feature_names is not None:
+                info["feature_names"] = (
+                    feature_names[: info["num_features"]]
+                    if info["num_features"]
+                    else feature_names
+                )
+            elif info["num_features"]:
+                info["feature_names"] = [
+                    f"feature_{i}" for i in range(info["num_features"])
+                ]
+
+    elif isinstance(model, lgb.LGBMClassifier):
+        if hasattr(model, "n_features_in_"):
+            info["num_features"] = model.n_features_in_
+        else:
+            # Fallback: try to get from booster
+            try:
+                booster = model.booster_
+                if booster:
+                    feature_names_booster = booster.feature_name()
+                    info["num_features"] = len(feature_names_booster)
+                    info["feature_names"] = feature_names_booster
+            except:
+                pass
+
+        # Get feature names
+        if not info["feature_names"]:
+            if (
+                hasattr(model, "feature_names_in_")
+                and model.feature_names_in_ is not None
+            ):
+                info["feature_names"] = list(model.feature_names_in_)
+            else:
+                info["feature_names"] = st.session_state.selected_features
+
+    elif isinstance(model, CatBoostClassifier):
+        if hasattr(model, "n_features_in_"):
+            info["num_features"] = model.n_features_in_
+        else:
+            # Fallback: get from feature names
+            try:
+                feature_names_cat = model.feature_names_
+                if feature_names_cat:
+                    info["num_features"] = len(feature_names_cat)
+                    info["feature_names"] = feature_names_cat
+            except:
+                pass
+
+        # Get feature names
+        if not info["feature_names"]:
+            if hasattr(model, "feature_names_") and model.feature_names_ is not None:
+                info["feature_names"] = list(model.feature_names_)
+            else:
+                info["feature_names"] = st.session_state.selected_features
+
+    # Handle VotingClassifier
+    elif isinstance(model, VotingClassifier):
+        # Get info from the first estimator
+        if model.estimators_:
+            first_estimator = model.estimators_[0]
+            base_info = get_model_info(first_estimator, feature_names)
+            info["num_features"] = base_info["num_features"]
+            info["feature_names"] = base_info["feature_names"]
+
+        # Add ensemble information
+        estimator_names = [name for name in model.estimators_]
+        info["ensemble_estimators"] = estimator_names
+        info["voting_type"] = getattr(model, "voting", "hard")
+
+    # Fallback for other models
+    else:
+        if feature_names is not None:
+            info["num_features"] = len(feature_names)
+            info["feature_names"] = feature_names
+
+    return info
 
 
 def display_model_info(model_info):
@@ -88,55 +208,23 @@ def display_model_info(model_info):
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("Number of Models", len(model_info["models"]))
+        st.metric("Model:", model_info["model"])
 
     with col2:
-        st.metric("Features Used", len(model_info["features"]))
+        st.metric("Number of Features Used", model_info["num_features"])
 
     with col3:
-        if model_info["is_multiple"]:
-            best_accuracy = model_info["results_df"]["accuracy"].max()
-            st.metric("Best Accuracy", f"{best_accuracy:.3f}")
-        else:
-            accuracy = model_info["results_df"]["accuracy"].iloc[0]
-            st.metric("Model Accuracy", f"{accuracy:.3f}")
-
-    # Model selection for multiple models
-    selected_model_idx = 0
-    if model_info["is_multiple"]:
-        st.subheader("📊 Model Selection")
-        col1, col2 = st.columns([1, 2])
-
-        with col1:
-            selected_model_idx = st.selectbox(
-                "Select model for prediction:",
-                range(len(model_info["models"])),
-                format_func=lambda x: f"{model_info['algorithms'][x]} (Acc: {model_info['results_df'].iloc[x]['accuracy']:.3f})",
-            )
-
-        with col2:
-            # Show selected model metrics
-            selected_metrics = model_info["results_df"].iloc[selected_model_idx]
-            metric_cols = st.columns(4)
-
-            with metric_cols[0]:
-                st.metric("Accuracy", f"{selected_metrics['accuracy']:.3f}")
-            with metric_cols[1]:
-                st.metric("AUC", f"{selected_metrics['auc']:.3f}")
-            with metric_cols[2]:
-                st.metric("F1 Score", f"{selected_metrics['f1']:.3f}")
-            with metric_cols[3]:
-                st.metric("Log Loss", f"{selected_metrics['logloss']:.3f}")
-
-    # Store selected model
-    st.session_state.selected_model_idx = selected_model_idx
+        accuracy = model_info["results_df"]["accuracy"].iloc[0]
+        st.metric("Model Accuracy", f"{accuracy:.3f}")
+        auc = model_info["results_df"]["auc"].iloc[0]
+        st.metric("Auc:", f"{auc}")
 
     # Display features used
     with st.expander("📋 Features Used in Model"):
-        if model_info["features"]:
+        if model_info["feature_names"]:
             # Display features in columns
             feature_cols = st.columns(3)
-            for i, feature in enumerate(model_info["features"]):
+            for i, feature in enumerate(model_info["feature_names"]):
                 with feature_cols[i % 3]:
                     st.write(f"• {feature}")
         else:
@@ -147,7 +235,7 @@ def get_player_input():
     """Get player input data"""
     st.subheader("👥 Player Information")
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.write("**Player 1**")
@@ -195,10 +283,53 @@ def get_player_input():
             else None
         )
 
-    return player1_data, player2_data
+    with col3:
+        st.write("**Match Info**")
+        surface = st.text_input("Surface Type", key="surface", placeholder="e.g., Clay")
+        tourney_name = st.text_input(
+            "Tourney", key="tourney_name", placeholder="e.g., Wimbledon"
+        )
+        round = st.selectbox(
+            "Tourney Round",
+            key="round",
+            options=[
+                "F",
+                "SF",
+                "QF",
+                "R16",
+                "R32",
+                "R64",
+                "R128",
+                "RR",
+                "BR",
+                "Q1",
+                "Q2",
+                "Q3",
+                "CR",
+                "PR",
+                "Q4",
+                "ER",
+                "",
+            ],
+            index=6,
+        )
+        best_of = st.select_slider("Best Of", key="best_of", options=[3, 5], value=3)
+
+        match_data = (
+            {
+                "surface": surface,
+                "tourney_name": tourney_name,
+                "best_of": best_of,
+                "round": round,
+            }
+            if surface and tourney_name and round
+            else None
+        )
+
+    return player1_data, player2_data, match_data
 
 
-def complete_features(player1_data, player2_data, features):
+def complete_features(player1_data, player2_data, match_data, features):
     """Complete feature data for prediction"""
     st.subheader("📊 Feature Data Completion")
 
@@ -236,7 +367,7 @@ def complete_features(player1_data, player2_data, features):
 
         elif category == "Match Context":
             # Handle match context features
-            handle_match_context(category_features, feature_data)
+            handle_match_context(match_data, category_features, feature_data)
 
         else:
             # Handle other features
@@ -348,7 +479,7 @@ def handle_player_statistics(
             )
 
 
-def handle_match_context(features, feature_data):
+def handle_match_context(match_data, features, feature_data):
     """Handle match context features"""
     for feature in features:
         feature_lower = feature.lower()
@@ -482,8 +613,7 @@ def make_prediction(feature_data, player1_data, player2_data, model_info):
     """Make prediction using the trained model"""
     try:
         # Get the selected model
-        selected_idx = getattr(st.session_state, "selected_model_idx", 0)
-        model = model_info["models"][selected_idx]
+        model = model_info["model"]
 
         # Prepare feature vector
         feature_vector = []
@@ -590,9 +720,8 @@ def display_prediction_results(
     st.dataframe(comparison_df, use_container_width=True)
 
     # Model information
-    selected_idx = getattr(st.session_state, "selected_model_idx", 0)
-    algorithm = model_info["algorithms"][selected_idx]
-    accuracy = model_info["results_df"].iloc[selected_idx]["accuracy"]
+    algorithm = model_info["model_name"]
+    accuracy = model_info["results_df"]["accuracy"]
 
     st.info(f"📈 Prediction made using **{algorithm}** (Accuracy: {accuracy:.3f})")
 
@@ -621,8 +750,8 @@ def store_prediction_history(
     st.session_state.prediction_history.append(prediction_record)
 
     # Keep only last 50 predictions
-    if len(st.session_state.prediction_history) > 50:
-        st.session_state.prediction_history = st.session_state.prediction_history[-50:]
+    if len(st.session_state.prediction_history) > 10:
+        st.session_state.prediction_history = st.session_state.prediction_history[-10:]
 
 
 # Add prediction history display
@@ -669,10 +798,12 @@ if __name__ == "__main__":
     display_prediction_history()
 
 
-
 """
 TODO
-- fix getting features for prediction
-- fix getting data for match prediction
-- making predictions
+- complete features
+- get latest player data
+- make prediction
+- display prediction results
+- store prediction history
+- display prediction history
 """

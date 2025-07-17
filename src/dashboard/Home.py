@@ -99,6 +99,10 @@ def initialize_session_state():
         st.session_state.training_data = None
     if "atp_ranking" not in st.session_state:
         st.session_state.atp_ranking = None
+    if "selected_features" not in st.session_state:
+        st.session_state.selected_features = None
+    if "player_data" not in st.session_state:
+        st.session_state.player_data = None
 
 
 @st.cache_data
@@ -184,6 +188,7 @@ def create_sample_performance_data():
 def main():
     # Hero Section
     training_data = load_data()
+    st.session_state.training_data = training_data
 
     st.markdown(
         """

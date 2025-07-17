@@ -269,6 +269,11 @@ def create_player_match_df(matches):
         len(player_matches[player_matches["match_id"].isna()]),
     )
 
+    root_dir = Path(__file__).resolve().parent.parent
+    player_data_path = root_dir / "data" / "player_data.parquet"
+    print("Creating Player Data from source.")
+    player_matches.to_parquet(player_data_path)
+
     return player_matches
 
 
