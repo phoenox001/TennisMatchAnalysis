@@ -91,18 +91,10 @@ def initialize_session_state():
         st.session_state.model_trained = None
     if "results" not in st.session_state:
         st.session_state.results = None
-    if "comparison_results" not in st.session_state:
-        st.session_state.comparison_results = None
     if "training_history" not in st.session_state:
         st.session_state.training_history = None
-    if "training_data" not in st.session_state:
-        st.session_state.training_data = None
-    if "atp_ranking" not in st.session_state:
-        st.session_state.atp_ranking = None
     if "selected_features" not in st.session_state:
         st.session_state.selected_features = None
-    if "player_data" not in st.session_state:
-        st.session_state.player_data = None
 
 
 @st.cache_data
@@ -125,8 +117,23 @@ def load_data():
         )
     st.session_state.training_data = training_data
 
+    # load player data to session state
+    player_data_path = root_dir / "data" / "player_data.parquet"
+    if os.path.exists(player_data_path):
+        print("Training Data Parquet file exists, reading...")
+        player_data = pd.read_parquet(player_data_path)
+    else:
+        player_data = None
+    st.session_state.player_data = player_data
+
     # load atp_ranking into session state
-    return training_data
+    atp_ranking_path = root_dir / "data" / "atp_ranking.parquet"
+    if os.path.exists(atp_ranking_path):
+        print("Training Data Parquet file exists, reading...")
+        atp_ranking = pd.read_parquet(atp_ranking_path)
+    else:
+        atp_ranking = None
+    st.session_state.atp_ranking = atp_ranking
 
 
 def load_best_model():
@@ -187,8 +194,8 @@ def create_sample_performance_data():
 
 def main():
     # Hero Section
-    training_data = load_data()
-    st.session_state.training_data = training_data
+    initialize_session_state()
+    load_data()
 
     st.markdown(
         """

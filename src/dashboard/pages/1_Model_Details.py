@@ -15,7 +15,6 @@ from train_model.train import (
     create_ensemble,
     cross_validate_model,
     get_best_model_from_cv,
-    compare_all_models,
 )
 
 
@@ -42,7 +41,6 @@ def load_training_data():
         return st.session_state.training_data
 
     # If not available, return None
-    # You can implement file loading here if needed
     return None
 
 

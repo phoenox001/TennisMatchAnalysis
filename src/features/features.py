@@ -43,7 +43,7 @@ def get_preprocessed_data(root_dir):
     # save atp_ranking for later access in dashboard
     atp_ranking = player_rankings.get_latest_atp_ranking(ranked_players)
     atp_ranking.to_parquet(
-        os.path.join(root_dir, "data", "training_data.parquet"),
+        os.path.join(root_dir, "data", "atp_ranking.parquet"),
         index=False,
     )
 
@@ -269,7 +269,7 @@ def create_player_match_df(matches):
         len(player_matches[player_matches["match_id"].isna()]),
     )
 
-    root_dir = Path(__file__).resolve().parent.parent
+    root_dir = Path(__file__).resolve().parent.parent.parent
     player_data_path = root_dir / "data" / "player_data.parquet"
     print("Creating Player Data from source.")
     player_matches.to_parquet(player_data_path)
@@ -674,7 +674,7 @@ def prepare_matches_data(matches):
 
 
 def create_feature_dataframe(
-    matches, players, root_dir=Path(__file__).resolve().parent.parent
+    matches, players, root_dir=Path(__file__).resolve().parent.parent.parent
 ):
     #
     # Combines all features into a single DataFrame for analysis. And removes some columns that are not needed for the analysis.

@@ -38,7 +38,7 @@ def main():
     if player1_data and player2_data and match_data:
         # Feature completion section
         feature_data = complete_features(
-            player1_data, player2_data, match_data, model_info["features"]
+            player1_data, player2_data, match_data, model_info["feature_names"]
         )
 
         # Prediction section
@@ -233,7 +233,7 @@ def display_model_info(model_info):
 
 def get_player_input():
     """Get player input data"""
-    st.subheader("👥 Player Information")
+    st.subheader("👥 Player and Match Information")
 
     col1, col2, col3 = st.columns(3)
 
@@ -248,12 +248,33 @@ def get_player_input():
         p1_rank = st.number_input(
             "Current Rank", min_value=1, max_value=5000, value=1, key="p1_rank"
         )
+        p1_points = st.number_input(
+            "Current ATP points",
+            min_value=0,
+            max_value=15000,
+            value=0,
+            key="p1_rank_points",
+        )
+        p1_is_seeded = st.toggle("Is Seeded?", False, key="p1_is_seeded")
+        if p1_is_seeded:
+            p1_seed = st.number_input(
+                "Tournament Seed (0 = no seed)",
+                min_value=1,
+                max_value=32,
+                value=1,
+                key="p1_seed",
+            )
+        else:
+            p1_seed = 0
 
         player1_data = (
             {
                 "first_name": p1_first_name,
                 "last_name": p1_last_name,
-                "rank": p1_rank,
+                "player1_rank": p1_rank,
+                "player1_rank_points": p1_points,
+                "player1_is_seeded": p1_is_seeded,
+                "player1_seed": p1_seed,
                 "full_name": f"{p1_first_name} {p1_last_name}".strip(),
             }
             if p1_first_name and p1_last_name
@@ -269,14 +290,39 @@ def get_player_input():
             "Last Name", key="p2_last", placeholder="e.g., Alcaraz"
         )
         p2_rank = st.number_input(
-            "Current Rank", min_value=1, max_value=1000, value=2, key="p2_rank"
+            "Current Rank",
+            min_value=1,
+            max_value=1000,
+            value=2,
+            key="p2_rank",
         )
+        p2_points = st.number_input(
+            "Current ATP points",
+            min_value=0,
+            max_value=15000,
+            value=0,
+            key="p2_rank_points",
+        )
+        p2_is_seeded = st.toggle("Is Seeded?", False, key="p2_is_seeded")
+        if p2_is_seeded:
+            p2_seed = st.number_input(
+                "Tournament Seed (0 = no seed)",
+                min_value=1,
+                max_value=32,
+                value=1,
+                key="p2_seed",
+            )
+        else:
+            p2_seed = 0
 
         player2_data = (
             {
                 "first_name": p2_first_name,
                 "last_name": p2_last_name,
-                "rank": p2_rank,
+                "player2_rank": p2_rank,
+                "player2_rank_points": p2_points,
+                "player2_is_seeded": p2_is_seeded,
+                "player2_seed": p2_seed,
                 "full_name": f"{p2_first_name} {p2_last_name}".strip(),
             }
             if p2_first_name and p2_last_name
@@ -288,6 +334,19 @@ def get_player_input():
         surface = st.text_input("Surface Type", key="surface", placeholder="e.g., Clay")
         tourney_name = st.text_input(
             "Tourney", key="tourney_name", placeholder="e.g., Wimbledon"
+        )
+        st.write(
+            "Tourney Level Overview:",
+            '"G": 7,  # Grand Slam',
+            '"F": 6,  # ATP Finals',
+            '"M": 5,  # Masters 1000',
+            '"A": 4,  # ATP 500 & 250',
+            '"D": 3,  # Davis Cup',
+            '"C": 2,  # Challengers',
+            '"S": 1,  # Satellites/ITFs',
+        )
+        tourney_level = st.number_input(
+            "Tourney level", min_value=1, max_value=7, value=7
         )
         round = st.selectbox(
             "Tourney Round",
@@ -313,12 +372,13 @@ def get_player_input():
             ],
             index=6,
         )
-        best_of = st.select_slider("Best Of", key="best_of", options=[3, 5], value=3)
+        best_of = st.selectbox("Best Of", key="best_of", options=[3, 5], index=0)
 
         match_data = (
             {
                 "surface": surface,
                 "tourney_name": tourney_name,
+                "tourney_level": tourney_level,
                 "best_of": best_of,
                 "round": round,
             }
@@ -333,11 +393,15 @@ def complete_features(player1_data, player2_data, match_data, features):
     """Complete feature data for prediction"""
     st.subheader("📊 Feature Data Completion")
 
-    # Initialize feature data
-    feature_data = {}
-
-    # Load training data if available
+    # Load data if available
     training_data = load_training_data()
+    player_data = load_player_data()
+    atp_ranking = load_atp_ranking()
+
+    # Initialize feature data
+    feature_data = pd.DataFrame()
+    feature_data["player1_id"] = get_player_id(atp_ranking, player1_data)
+    feature_data["player2_id"] = get_player_id(atp_ranking, player2_data)
 
     # Categorize features
     feature_categories = categorize_features(features)
@@ -348,9 +412,7 @@ def complete_features(player1_data, player2_data, match_data, features):
             continue
 
         st.write(f"**{category}**")
-
-        if category == "Rank Features":
-            # Handle rank-based features
+        if category == "Ranking":
             handle_rank_features(
                 category_features, player1_data, player2_data, feature_data
             )
@@ -359,8 +421,6 @@ def complete_features(player1_data, player2_data, match_data, features):
             # Handle player statistics
             handle_player_statistics(
                 category_features,
-                player1_data,
-                player2_data,
                 feature_data,
                 training_data,
             )
@@ -376,6 +436,26 @@ def complete_features(player1_data, player2_data, match_data, features):
     return feature_data
 
 
+def get_player_id(df, player_dict):
+    """
+    Find the player_id for a player based on their first and last name.
+    This function does not check for duplicate player names. It just chooses the first occurence of the name combination.
+    """
+    first_name = player_dict["first_name"]
+    last_name = player_dict["last_name"]
+
+    match = df[(df["name_first"] == first_name) & (df["name_last"] == last_name)]
+
+    if len(match) == 0:
+        return None
+    elif len(match) == 1:
+        return match["player_id"].iloc[0]
+    else:
+        # Multiple matches found
+        print(f"Warning: Multiple players found with name {first_name} {last_name}")
+        return match["player_id"].iloc[0]
+
+
 def categorize_features(features):
     """Categorize features into different types"""
     categories = {
@@ -387,17 +467,36 @@ def categorize_features(features):
 
     for feature in features:
         feature_lower = feature.lower()
-
-        if any(keyword in feature_lower for keyword in ["rank", "ranking"]):
-            categories["Rank Features"].append(feature)
+        if any(
+            keyword in feature_lower
+            for keyword in [
+                "rank",
+                "ranking",
+                "seed",
+                "seeded",
+            ]
+        ):
+            categories["Ranking"].append(feature)
         elif any(
             keyword in feature_lower
-            for keyword in ["win", "loss", "ace", "serve", "break", "set", "game"]
+            for keyword in [
+                "Won",
+                "ace",
+                "svpt",
+                "bp",
+                "set",
+                "SvGms",
+                "df",
+                "1stIn",
+                "hand",
+                "ht",
+                "age",
+            ]
         ):
             categories["Player Statistics"].append(feature)
         elif any(
             keyword in feature_lower
-            for keyword in ["surface", "tournament", "round", "best_of"]
+            for keyword in ["surface", "tournament", "round", "best_of", "tourney"]
         ):
             categories["Match Context"].append(feature)
         else:
@@ -414,42 +513,36 @@ def handle_rank_features(features, player1_data, player2_data, feature_data):
         if "player1" in feature.lower() or "p1" in feature.lower():
             with col1:
                 feature_data[feature] = st.number_input(
-                    f"{feature} (Player 1)",
-                    value=float(player1_data["rank"]),
+                    f"{feature}",
+                    value=float(player1_data[feature]),
                     key=f"rank_{feature}_p1",
                 )
-        elif "player2" in feature.lower() or "p2" in feature.lower():
+        else:
             with col2:
                 feature_data[feature] = st.number_input(
-                    f"{feature} (Player 2)",
-                    value=float(player2_data["rank"]),
+                    f"{feature}",
+                    value=float(player2_data[feature]),
                     key=f"rank_{feature}_p2",
                 )
-        else:
-            # Generic rank feature
-            feature_data[feature] = st.number_input(
-                f"{feature}",
-                value=float(abs(player1_data["rank"] - player2_data["rank"])),
-                key=f"rank_{feature}",
-            )
 
 
-def handle_player_statistics(
-    features, player1_data, player2_data, feature_data, training_data
-):
+def handle_player_statistics(features, feature_data, historical_data):
     """Handle player statistics features"""
     col1, col2 = st.columns(2)
+    player1_id = feature_data["player1_id"]
+    player2_id = feature_data["player2_id"]
+
+    # Calculate from historical data
+    p1_latest = get_latest_player_data(player1_id, historical_data)
+    p2_latest = get_latest_player_data(player2_id, historical_data)
 
     for feature in features:
-        # Get latest data from training data
-        p1_latest = get_latest_player_data(player1_data["full_name"], training_data)
-        p2_latest = get_latest_player_data(player2_data["full_name"], training_data)
 
         if "player1" in feature.lower() or "p1" in feature.lower():
             with col1:
                 default_value = get_feature_default_value(feature, p1_latest)
                 feature_data[feature] = st.number_input(
-                    f"{feature} (Player 1)",
+                    f"{feature} ({feature_data['player1_id']})",
                     value=default_value,
                     key=f"stat_{feature}_p1",
                     help=(
@@ -462,7 +555,7 @@ def handle_player_statistics(
             with col2:
                 default_value = get_feature_default_value(feature, p2_latest)
                 feature_data[feature] = st.number_input(
-                    f"{feature} (Player 2)",
+                    f"{feature} ({feature_data['player2_id']})",
                     value=default_value,
                     key=f"stat_{feature}_p2",
                     help=(
@@ -473,7 +566,7 @@ def handle_player_statistics(
                 )
         else:
             # Generic statistic
-            default_value = get_feature_default_value(feature, None)
+            default_value = get_feature_default_value(feature, historical_data)
             feature_data[feature] = st.number_input(
                 f"{feature}", value=default_value, key=f"stat_{feature}"
             )
@@ -485,34 +578,60 @@ def handle_match_context(match_data, features, feature_data):
         feature_lower = feature.lower()
 
         if "surface" in feature_lower:
+            surfaces = ["Hard", "Clay", "Grass", "Carpet"]
+            idx = surfaces.index(match_data["surface"])
             feature_data[feature] = st.selectbox(
                 f"{feature}",
-                ["Hard", "Clay", "Grass", "Carpet"],
+                surfaces,
+                index=idx,
                 key=f"context_{feature}",
             )
-        elif "tournament" in feature_lower:
-            feature_data[feature] = st.selectbox(
+        elif "tourney_level" in feature_lower:
+            feature_data[feature] = st.number_input(
                 f"{feature}",
-                ["Grand Slam", "Masters 1000", "ATP 500", "ATP 250", "Other"],
+                min_value=1,
+                max_value=7,
+                value=match_data["tourney_level"],
+                key=f"context_{feature}",
+            )
+        elif "tourney_name" in feature_lower:
+            feature_data[feature_data] = st.text_input(
+                f"{feature}",
+                value=match_data["tourney_name"],
                 key=f"context_{feature}",
             )
         elif "round" in feature_lower:
+            options = [
+                "F",
+                "SF",
+                "QF",
+                "R16",
+                "R32",
+                "R64",
+                "R128",
+                "RR",
+                "BR",
+                "Q1",
+                "Q2",
+                "Q3",
+                "CR",
+                "PR",
+                "Q4",
+                "ER",
+                "",
+            ]
+            idx = options.index(match_data["round"])
             feature_data[feature] = st.selectbox(
                 f"{feature}",
-                [
-                    "Final",
-                    "Semi-Final",
-                    "Quarter-Final",
-                    "Round of 16",
-                    "Round of 32",
-                    "Round of 64",
-                    "Round of 128",
-                ],
+                options,
+                index=idx,
                 key=f"context_{feature}",
             )
         elif "best_of" in feature_lower:
+            options = [3, 5]
+            idx = options.index(match_data["best_of"])
             feature_data[feature] = st.selectbox(
-                f"{feature}", [3, 5], key=f"context_{feature}"
+                f"{feature}", options, index=idx, key=f"context_{feature}"
             )
         else:
             feature_data[feature] = st.text_input(
@@ -546,32 +665,27 @@ def load_atp_ranking():
     return None
 
 
-def get_latest_player_data(player_name_first, player_name_last, training_data):
+def load_player_data():
+    """Load training data from session state or file"""
+    # Try to get player data from session state
+    if hasattr(st.session_state, "training_data"):
+        return st.session_state.player_data
+
+    # If not available, return None
+    return None
+
+
+def get_latest_player_data(player_id, historical_data):
     """Get the latest data for a specific player from training data"""
-    if training_data is None:
+    if historical_data is None:
         st.warning("training data is not loaded")
         return None
 
     # Filter data for the specific player
     try:
-        # get player_id through latest atp ranking table
-        atp_ranking = load_atp_ranking()
-        if atp_ranking is not None:
-            player = atp_ranking[
-                atp_ranking["name_first"]
-                == player_name_first & atp_ranking["name_last"]
-                == player_name_last
-            ]
-            player_id = player[["player_id"]]
-        else:
-            st.warning("atp rankings data is not loaded")
-            return None
-
         # use player_id to get latest info from training data
-        training_data = training_data.sort_values(["tourney_date", "match_num"])
-        player_data = training_data[training_data["player1_id"] == player_id]
-
-        # adjust data to fit the newest data available
+        historical_data = historical_data.sort_values(["tourney_date", "match_num"])
+        player_data = historical_data[historical_data["player_id"] == player_id]
 
         if not player_data.empty:
             # Return the most recent entry
@@ -597,7 +711,7 @@ def get_feature_default_value(feature, player_data):
     # Return sensible defaults based on feature type
     feature_lower = feature.lower()
 
-    if "percentage" in feature_lower or "pct" in feature_lower:
+    if "avg" in feature_lower or "pct" in feature_lower:
         return 0.5
     elif "win" in feature_lower and "ratio" in feature_lower:
         return 0.5
@@ -621,7 +735,7 @@ def make_prediction(feature_data, player1_data, player2_data, model_info):
             if feature in feature_data:
                 feature_vector.append(feature_data[feature])
             else:
-                feature_vector.append(0.0)  # Default value
+                feature_vector.append(0.0)
 
         feature_vector = np.array(feature_vector).reshape(1, -1)
 
@@ -797,13 +911,3 @@ if __name__ == "__main__":
     st.markdown("---")
     display_prediction_history()
 
-
-"""
-TODO
-- complete features
-- get latest player data
-- make prediction
-- display prediction results
-- store prediction history
-- display prediction history
-"""

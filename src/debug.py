@@ -9,6 +9,7 @@ from train_model.train import (
     create_ensemble,
     analyze_categorical_cardinality,
 )
+from features.features import create_feature_dataframe, get_preprocessed_data
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score
 from pathlib import Path
@@ -16,18 +17,24 @@ import xgboost as xgb
 import numpy as np
 import pandas as pd
 
-X, y = create_training_data()
-ensemble_model, comparison_results, ensemble_results = create_ensemble(
-    X, y, top_models=5
-)
-print(ensemble_results)
+# X, y = create_training_data()
+# ensemble_model, comparison_results, ensemble_results = create_ensemble(
+#     X, y, top_models=5
+# )
+# print(ensemble_results)
 
 # results, model = cross_validate_model(X, y, model_name="Neural Network")
 # print(results)
 # print(model)
 
+root_dir = Path(__file__).parent.parent
+matches, players = get_preprocessed_data(root_dir)
+training_data = create_feature_dataframe(matches, players)
 
-
+file_path = (
+    "/Users/tim/Documents/Projects/TennisMatchAnalysis/data/training_data.parquet"
+)
+training_data.to_parquet(file_path)
 # Beispiel für die Verwendung:
 """
 # Daten laden
